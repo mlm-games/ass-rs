@@ -151,6 +151,19 @@ pub fn parse_override_block<'a>(
                     byte_pos += 1;
                     char_pos += 1;
                     tag_name_len += 1;
+
+                    // Special handling for \r (reset style) and \fn (font name) tags.
+                    // These are the ONLY two ASS tags whose arguments can start with ASCII
+                    // alphabetic characters without any delimiter (e.g., \fnArial, \rDefault).
+                    // All other tags have arguments starting with digits, '&', '(' or other
+                    // non-alphabetic characters, so they don't need special handling.
+                    if tag_name_len == 1 && chars[char_pos - 1] == 'r' {
+                        break;
+                    }
+                    if tag_name_len == 2 && chars[char_pos - 2] == 'f' && chars[char_pos - 1] == 'n'
+                    {
+                        break;
+                    }
                 } else {
                     break;
                 }
@@ -270,6 +283,14 @@ pub fn parse_override_block_with_registry<'a>(
                     byte_pos += 1;
                     char_pos += 1;
                     tag_name_len += 1;
+
+                    if tag_name_len == 1 && chars[char_pos - 1] == 'r' {
+                        break;
+                    }
+                    if tag_name_len == 2 && chars[char_pos - 2] == 'f' && chars[char_pos - 1] == 'n'
+                    {
+                        break;
+                    }
                 } else {
                     break;
                 }
