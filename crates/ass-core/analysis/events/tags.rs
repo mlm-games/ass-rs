@@ -151,6 +151,19 @@ pub fn parse_override_block<'a>(
                     byte_pos += 1;
                     char_pos += 1;
                     tag_name_len += 1;
+
+                    // Special handling for \r (reset style) and \fn (font name) tags.
+                    // These are the ONLY two ASS tags whose arguments can start with ASCII
+                    // alphabetic characters without any delimiter (e.g., \fnArial, \rDefault).
+                    // All other tags have arguments starting with digits, '&', '(' or other
+                    // non-alphabetic characters, so they don't need special handling.
+                    if tag_name_len == 1 && chars[char_pos - 1] == 'r' {
+                        break;
+                    }
+                    if tag_name_len == 2 && chars[char_pos - 2] == 'f' && chars[char_pos - 1] == 'n'
+                    {
+                        break;
+                    }
                 } else {
                     break;
                 }
@@ -270,6 +283,19 @@ pub fn parse_override_block_with_registry<'a>(
                     byte_pos += 1;
                     char_pos += 1;
                     tag_name_len += 1;
+
+                    // Special handling for \r (reset style) and \fn (font name) tags.
+                    // These are the ONLY two ASS tags whose arguments can start with ASCII
+                    // alphabetic characters without any delimiter (e.g., \fnArial, \rDefault).
+                    // All other tags have arguments starting with digits, '&', '(' or other
+                    // non-alphabetic characters, so they don't need special handling.
+                    if tag_name_len == 1 && chars[char_pos - 1] == 'r' {
+                        break;
+                    }
+                    if tag_name_len == 2 && chars[char_pos - 2] == 'f' && chars[char_pos - 1] == 'n'
+                    {
+                        break;
+                    }
                 } else {
                     break;
                 }
@@ -573,20 +599,15 @@ mod tests {
         assert_eq!(tags[0].args(), "微软雅黑");
     }
 
-    // Tests for \fn tag with ASCII alphabetic font names
-    // These tests document the current bug where ASCII letters after \fn are incorrectly
-    // consumed as part of the tag name instead of being treated as arguments.
-    // See: https://aegisub.org/docs/latest/ass_tags
     #[test]
     fn test_parse_fn_tag_with_ascii_font_name() {
         let mut tags = Vec::new();
         let mut diagnostics = Vec::new();
 
+        // Test \fn tag special handling with ASCII font name (lines 163-165)
         parse_override_block("\\fnArial", 0, &mut tags, &mut diagnostics);
 
         assert_eq!(tags.len(), 1);
-        // Expected: name="fn", args="Arial"
-        // Current bug: name="fnArial", args=""
         assert_eq!(tags[0].name(), "fn");
         assert_eq!(tags[0].args(), "Arial");
         assert_eq!(diagnostics.len(), 0);
@@ -605,11 +626,10 @@ mod tests {
         let mut tags = Vec::new();
         let mut diagnostics = Vec::new();
 
+        // Test \fn tag special handling with spaced font name (lines 163-165)
         parse_override_block("\\fnTimes New Roman", 0, &mut tags, &mut diagnostics);
 
         assert_eq!(tags.len(), 1);
-        // Expected: name="fn", args="Times New Roman"
-        // Current bug: name="fnTimes", args=" New Roman"
         assert_eq!(tags[0].name(), "fn");
         assert_eq!(tags[0].args(), "Times New Roman");
         assert_eq!(diagnostics.len(), 0);
@@ -629,19 +649,15 @@ mod tests {
         assert_eq!(diagnostics.len(), 0);
     }
 
-    // Tests for \r tag with ASCII alphabetic style names
-    // These tests document the current bug where ASCII letters after \r are incorrectly
-    // consumed as part of the tag name instead of being treated as arguments.
     #[test]
     fn test_parse_r_tag_with_ascii_style_name() {
         let mut tags = Vec::new();
         let mut diagnostics = Vec::new();
 
+        // Test \r tag special handling with ASCII style name (lines 160-162)
         parse_override_block("\\rAlternate", 0, &mut tags, &mut diagnostics);
 
         assert_eq!(tags.len(), 1);
-        // Expected: name="r", args="Alternate"
-        // Current bug: name="rAlternate", args=""
         assert_eq!(tags[0].name(), "r");
         assert_eq!(tags[0].args(), "Alternate");
         assert_eq!(diagnostics.len(), 0);
@@ -660,10 +676,10 @@ mod tests {
         let mut tags = Vec::new();
         let mut diagnostics = Vec::new();
 
+        // Test \r tag without arguments (lines 160-162)
         parse_override_block("\\r", 0, &mut tags, &mut diagnostics);
 
         assert_eq!(tags.len(), 1);
-        // This case should work correctly even with current implementation
         assert_eq!(tags[0].name(), "r");
         assert_eq!(tags[0].args(), "");
         assert_eq!(diagnostics.len(), 0);
@@ -677,7 +693,6 @@ mod tests {
         assert_eq!(diagnostics.len(), 0);
     }
 
-    // Tests for mixed tag blocks with \fn and \r tags
     #[test]
     fn test_parse_mixed_tags_with_fn() {
         let mut tags = Vec::new();
@@ -686,14 +701,6 @@ mod tests {
         parse_override_block("\\fnArial\\fs20\\b1", 0, &mut tags, &mut diagnostics);
 
         assert_eq!(tags.len(), 3);
-        // Expected:
-        //   - fn, Arial
-        //   - fs, 20
-        //   - b, 1
-        // Current bug:
-        //   - fnArial, (empty)
-        //   - fs, 20
-        //   - b, 1
         assert_eq!(tags[0].name(), "fn");
         assert_eq!(tags[0].args(), "Arial");
         assert_eq!(tags[1].name(), "fs");
@@ -729,12 +736,6 @@ mod tests {
         parse_override_block("\\rStyle\\b1", 0, &mut tags, &mut diagnostics);
 
         assert_eq!(tags.len(), 2);
-        // Expected:
-        //   - r, Style
-        //   - b, 1
-        // Current bug:
-        //   - rStyle, (empty)
-        //   - b, 1
         assert_eq!(tags[0].name(), "r");
         assert_eq!(tags[0].args(), "Style");
         assert_eq!(tags[1].name(), "b");
