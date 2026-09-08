@@ -9,18 +9,6 @@ use alloc::{boxed::Box, format, vec::Vec};
 #[cfg(not(feature = "nostd"))]
 use std::{boxed::Box, vec::Vec};
 
-// ToString is only needed for backends that aren't compiled with minimal features
-#[cfg(all(
-    feature = "nostd",
-    any(feature = "hardware-backend", feature = "web-backend")
-))]
-use alloc::string::ToString;
-#[cfg(all(
-    not(feature = "nostd"),
-    any(feature = "hardware-backend", feature = "web-backend")
-))]
-use std::string::ToString;
-
 #[cfg(feature = "software-backend")]
 pub mod coverage;
 
@@ -30,27 +18,21 @@ pub mod raster;
 #[cfg(feature = "software-backend")]
 pub mod software;
 
-#[cfg(feature = "hardware-backend")]
-pub mod hardware;
+#[cfg(feature = "repose-backend")]
+pub mod repose;
 
-#[cfg(feature = "web-backend")]
-pub mod web;
+#[cfg(all(feature = "repose-backend", feature = "nostd"))]
+compile_error!("`repose-backend` requires std and cannot be combined with `nostd`");
 
 /// Backend type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendType {
     /// Auto-detect best available backend
     Auto,
-    /// CPU-based software renderer
+    /// CPU-based software renderer (tiny-skia reference implementation)
     Software,
-    /// Vulkan hardware acceleration
-    Vulkan,
-    /// Metal hardware acceleration (macOS)
-    Metal,
-    /// WebGPU for web and native
-    WebGPU,
-    /// WebGL fallback for web
-    WebGL,
+    /// GPU renderer emitting a Repose [`Scene`](repose_core::Scene)
+    Repose,
 }
 
 impl BackendType {
@@ -59,10 +41,7 @@ impl BackendType {
         match self {
             Self::Auto => "Auto",
             Self::Software => "Software",
-            Self::Vulkan => "Vulkan",
-            Self::Metal => "Metal",
-            Self::WebGPU => "WebGPU",
-            Self::WebGL => "WebGL",
+            Self::Repose => "Repose",
         }
     }
 }
@@ -170,27 +149,23 @@ pub fn create_backend(
 ) -> Result<Box<dyn RenderBackend>, RenderError> {
     match backend_type {
         BackendType::Auto => {
-            // Try backends in order of preference
-            #[cfg(feature = "web-backend")]
-            if let Ok(backend) = create_backend(BackendType::WebGPU, width, height) {
-                return Ok(backend);
+            // Preferred GPU path first, portable CPU reference second. Note
+            // the Repose backend only needs a GPU at render time, so `Auto`
+            // resolves to it whenever the feature is compiled in; select
+            // `Software` explicitly for headless-without-GPU environments.
+            #[cfg(feature = "repose-backend")]
+            {
+                return create_backend(BackendType::Repose, width, height);
             }
 
-            #[cfg(all(feature = "hardware-backend", feature = "vulkan"))]
-            if let Ok(backend) = create_backend(BackendType::Vulkan, width, height) {
-                return Ok(backend);
+            #[cfg(not(feature = "repose-backend"))]
+            {
+                #[cfg(feature = "software-backend")]
+                return create_backend(BackendType::Software, width, height);
+
+                #[allow(unreachable_code)]
+                return Err(RenderError::BackendError("No backend available".into()));
             }
-
-            #[cfg(all(feature = "hardware-backend", feature = "metal", target_os = "macos"))]
-            if let Ok(backend) = create_backend(BackendType::Metal, width, height) {
-                return Ok(backend);
-            }
-
-            #[cfg(feature = "software-backend")]
-            return create_backend(BackendType::Software, width, height);
-
-            #[allow(unreachable_code)]
-            Err(RenderError::BackendError("No backend available".into()))
         }
 
         #[cfg(feature = "software-backend")]
@@ -200,29 +175,10 @@ pub fn create_backend(
             Ok(Box::new(backend))
         }
 
-        #[cfg(all(feature = "hardware-backend", feature = "vulkan"))]
-        BackendType::Vulkan => {
-            // TODO: Implement VulkanBackend
-            Err(RenderError::BackendError("Vulkan backend not yet implemented".to_string()))
-        }
-
-        #[cfg(all(feature = "hardware-backend", feature = "metal", target_os = "macos"))]
-        BackendType::Metal => {
+        #[cfg(feature = "repose-backend")]
+        BackendType::Repose => {
             let context = crate::renderer::RenderContext::new(width, height);
-            let backend = hardware::metal::MetalBackend::new(&context)?;
-            Ok(Box::new(backend))
-        }
-
-        #[cfg(feature = "web-backend")]
-        BackendType::WebGPU => {
-            // TODO: Implement WebGPUBackend
-            Err(RenderError::BackendError("WebGPU backend not yet implemented".to_string()))
-        }
-        BackendType::WebGL => {
-            Err(RenderError::BackendError(
-                "WebGL backend is not supported. Please use the Software backend instead, \
-                 which provides full feature support and works in all environments including web browsers.".into()
-            ))
+            Ok(Box::new(repose::ReposeBackend::new(&context)))
         }
 
         #[allow(unreachable_patterns)]

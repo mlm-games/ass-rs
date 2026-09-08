@@ -57,7 +57,7 @@ cargo build -p ass-core --no-default-features --features minimal,nostd
 cargo build -p ass-editor --no-default-features --features minimal,nostd
 # Docs (warnings are errors) — curated, working feature surface:
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --no-default-features --features full,analysis,plugins,simd,serde,unicode-wrap
-# MSRV (1.82):
+# MSRV (1.98):
 cargo check --workspace --no-default-features --features full,analysis,plugins,simd,serde,unicode-wrap
 # Coverage (scope to a working combo, not --all-features):
 cargo tarpaulin --workspace --no-default-features --features full

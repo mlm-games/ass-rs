@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["ass-rs contributors"]
 description = "High-performance ASS subtitle renderer with modular backends"
-license = "MIT OR Apache-2.0"
+license = "MPL-2.0"
 repository = "https://github.com/ass-rs/ass-renderer"
 keywords = ["ass", "subtitle", "renderer", "webgpu", "vulkan"]
 categories = ["multimedia::video", "graphics", "rendering"]
@@ -22,11 +22,11 @@ ttf-parser = "0.20"
 # Parallelization
 rayon = { version = "1.10", optional = true }
 
-# GPU backends
-ash = { version = "0.37", optional = true }
-wgpu = { version = "0.19", optional = true }
-pollster = { version = "0.3", optional = true }
-bytemuck = { version = "1.14", features = ["derive"], optional = true }
+# Repose GPU backend (scene emission + offscreen readback)
+repose-core = { path = "../../../repose/crates/repose-core", optional = true }
+repose-render-wgpu = { path = "../../../repose/crates/repose-render-wgpu", optional = true }
+lyon_path = { version = "1.0", optional = true }
+lyon_tessellation = { version = "1.0", optional = true }
 
 # Utilities
 smallvec = "1.14"
@@ -40,23 +40,6 @@ serde_json = { version = "1.0", optional = true }
 
 # Debug and visualization
 image = { version = "0.24", optional = true }
-
-# macOS/iOS support
-[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-metal = { version = "0.27", optional = true }
-
-# WASM support
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
-wasm-bindgen = { version = "0.2", optional = true }
-wasm-bindgen-futures = { version = "0.4", optional = true }
-web-sys = { version = "0.3", optional = true, features = [
-    "Window",
-    "Document",
-    "HtmlCanvasElement",
-    "WebGl2RenderingContext",
-    "OffscreenCanvas"
-]}
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -74,21 +57,13 @@ full = ["analysis-integration", "software-backend", "backend-probing", "simd", "
 # Core features
 analysis-integration = ["ass-core/analysis"]
 software-backend = ["rayon"]
-hardware-backend = ["vulkan", "metal"]
-web-backend = ["wgpu", "pollster", "bytemuck", "wasm-bindgen", "wasm-bindgen-futures", "web-sys"]
+repose-backend = ["dep:repose-core", "dep:repose-render-wgpu", "dep:lyon_path", "dep:lyon_tessellation"]
 backend-probing = []
 backend-metrics = []
-
-# Hardware backend sub-features
-vulkan = ["ash", "hardware-backend"]
-metal = ["dep:metal", "hardware-backend"]
 
 # Performance features
 simd = ["ass-core/simd", "tiny-skia/simd"]
 arena = ["bumpalo", "ass-core/arena"]
-
-# WASM optimizations
-wasm = ["web-backend"]
 
 # Serialization
 serde = ["dep:serde", "dep:serde_json", "ass-core/serde"]
@@ -96,7 +71,7 @@ serde = ["dep:serde", "dep:serde_json", "ass-core/serde"]
 # Debug features
 image = ["dep:image"]
 
-# No-std support (limited backends)
+# No-std support (software backend only; the Repose backend needs std + GPU)
 nostd = ["ass-core/nostd"]
 
 # Dev-only: link native libass (vcpkg on Windows / pkg-config elsewhere) to A/B
@@ -109,7 +84,7 @@ unicode-wrap = ["ass-core/unicode-wrap"]
 
 # Development features
 benches = []
-docs = ["full", "web-backend", "unicode-wrap", "plugins", "benches"] # Safe feature set for documentation
+docs = ["full", "repose-backend", "unicode-wrap", "plugins", "benches"] # Safe feature set for documentation
 
 # Plugin system support
 plugins = []
