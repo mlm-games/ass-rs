@@ -80,20 +80,20 @@ fn validate_hex_chars_simd(simd_chunk: u8x16) -> bool {
 
     // Check for digits 0-9
     for digit in b'0'..=b'9' {
-        valid_mask |= simd_chunk.cmp_eq(u8x16::splat(digit));
+        valid_mask |= simd_chunk.simd_eq(u8x16::splat(digit));
     }
 
     // Check for uppercase A-F
     for hex_char in b'A'..=b'F' {
-        valid_mask |= simd_chunk.cmp_eq(u8x16::splat(hex_char));
+        valid_mask |= simd_chunk.simd_eq(u8x16::splat(hex_char));
     }
 
     // Check for lowercase a-f
     for hex_char in b'a'..=b'f' {
-        valid_mask |= simd_chunk.cmp_eq(u8x16::splat(hex_char));
+        valid_mask |= simd_chunk.simd_eq(u8x16::splat(hex_char));
     }
 
-    valid_mask.move_mask() == 0xFFFF
+    valid_mask.to_bitmask() == 0xFFFF
 }
 
 /// Direct scalar hex parsing for strings <= 8 characters

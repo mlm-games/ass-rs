@@ -1,7 +1,8 @@
 //! Benchmarks for undo/redo stack push and undo operations.
 
 use crate::common::generate_large_script;
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
+use std::hint::black_box;
 use reassarus_editor::core::{EditorDocument, Position, UndoStackConfig};
 
 /// Benchmark undo/redo stack operations

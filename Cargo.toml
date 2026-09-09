@@ -1,12 +1,12 @@
 [workspace]
 members = ["crates/*"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 version = "0.1.1"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/wiedymi/reassarus"
+repository = "https://github.com/mlm-games/reassarus"
 rust-version = "1.98"
 
 [workspace.dependencies]
@@ -16,16 +16,16 @@ reassarus-editor = { path = "crates/reassarus-editor", version = "0.1.1" }
 reassarus-renderer = { path = "crates/reassarus-renderer", version = "0.1.1" }
 
 # Shared core deps
-thiserror = "1"
+thiserror = "2"
 ahash = { version = "0.8", default-features = false, features = ["std"] }
 bitflags = "2"
-hashbrown = { version = "0.14", features = ["ahash"] }
+hashbrown = { version = "0.17" }
 bumpalo = "3"
-wide = "0.7"
+wide = "1"
 unicode-linebreak = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 # Editor deps
 ropey = { version = "1.6", default-features = false }
@@ -35,23 +35,23 @@ futures = "0.3"
 tokio = { version = "1", features = ["sync"] }
 regex = "1"
 static_assertions = "1"
-getrandom = "0.3"
+getrandom = "0.4"
 tempfile = "3"
 pretty_assertions = "1"
 proptest = "1"
 
 # Renderer deps
-rustybuzz = "0.11"
-tiny-skia = "0.11"
-fontdb = "0.16"
-ttf-parser = "0.20"
+rustybuzz = "0.20"
+tiny-skia = "0.12"
+fontdb = "0.24"
+ttf-parser = "0.25"
 rayon = "1"
 repose-core = "0.30"
 repose-render-wgpu = "0.30"
 lyon_path = "1.0"
 lyon_tessellation = "1.0"
 smallvec = "1"
-image = "0.24"
+image = "0.25"
 env_logger = "0.11"
 vcpkg = "0.2"
 pkg-config = "0.3"

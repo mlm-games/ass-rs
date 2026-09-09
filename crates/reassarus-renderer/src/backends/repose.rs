@@ -929,7 +929,6 @@ fn tessellate_fill_mesh(path: &tiny_skia::Path, color: [f32; 4]) -> Option<Arc<V
 ///
 /// Returns `false` when there is no path or tessellation fails.
 fn emit_vector(out: &mut BuiltScene, data: &VectorData) -> bool {
-    use lyon_path::math::Point;
     use lyon_tessellation::{BuffersBuilder, StrokeOptions, StrokeTessellator};
 
     let Some(path) = &data.path else {

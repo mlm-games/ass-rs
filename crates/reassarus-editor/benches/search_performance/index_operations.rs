@@ -1,7 +1,8 @@
 //! Benchmark index building and incremental update operations.
 
 use crate::common::generate_search_script;
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
+use std::hint::black_box;
 use reassarus_editor::{
     core::{EditorDocument, Position},
     utils::search::{DocumentSearch, DocumentSearchImpl, SearchOptions, SearchScope},

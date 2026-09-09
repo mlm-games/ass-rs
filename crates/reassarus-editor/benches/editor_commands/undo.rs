@@ -1,6 +1,7 @@
 //! Benchmarks for command execution with undo/redo.
 
-use criterion::{black_box, Criterion};
+use criterion::{Criterion};
+use std::hint::black_box;
 use reassarus_editor::commands::{CreateStyleCommand, InsertTextCommand};
 use reassarus_editor::core::{EditorDocument, Position, StyleBuilder};
 use reassarus_editor::EditorCommand;

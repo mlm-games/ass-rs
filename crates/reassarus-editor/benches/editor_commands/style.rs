@@ -1,6 +1,7 @@
 //! Benchmarks for style command operations.
 
-use criterion::{black_box, Criterion};
+use criterion::{Criterion};
+use std::hint::black_box;
 use reassarus_editor::commands::{
     ApplyStyleCommand, CloneStyleCommand, CreateStyleCommand, EditStyleCommand,
 };

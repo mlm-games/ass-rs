@@ -1,6 +1,7 @@
 //! Benchmarks for batch command execution.
 
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
+use std::hint::black_box;
 use reassarus_editor::commands::{
     BatchCommand, EditStyleCommand, InsertTagCommand, InsertTextCommand, TimingAdjustCommand,
 };

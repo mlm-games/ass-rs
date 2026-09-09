@@ -36,7 +36,7 @@ fn validate_utf8_simd_impl(bytes: &[u8]) -> Result<(), CoreError> {
         let simd_chunk = u8x16::from(*chunk);
         let ascii_mask = u8x16::splat(0x80);
 
-        let has_non_ascii = (simd_chunk & ascii_mask).move_mask();
+        let has_non_ascii = (simd_chunk & ascii_mask).to_bitmask();
         if has_non_ascii != 0 {
             return validate_utf8_scalar(bytes);
         }

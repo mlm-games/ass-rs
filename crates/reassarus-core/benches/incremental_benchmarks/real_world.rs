@@ -3,7 +3,8 @@
 //! Exercises representative subtitle profiles and pathological edits such as
 //! section-boundary shifts, malformed recovery, and very large changes.
 
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
+use std::hint::black_box;
 use reassarus_core::{parser::Script, utils::ScriptGenerator};
 use std::{hint::black_box as std_black_box, time::Instant};
 

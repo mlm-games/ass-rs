@@ -1,12 +1,12 @@
 //! Memory usage and UU-decoding benchmark functions for `parser_benchmarks`.
 
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
 use reassarus_core::{
     analysis::events::dialogue_info::DialogueInfo,
     parser::{Script, Section},
     utils::ScriptGenerator,
 };
-use std::hint::black_box as std_black_box;
+use std::hint::{black_box, black_box as std_black_box};
 
 /// Benchmark memory usage patterns
 pub fn bench_memory_usage(c: &mut Criterion) {

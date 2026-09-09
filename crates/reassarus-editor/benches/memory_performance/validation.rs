@@ -1,7 +1,8 @@
 //! Benchmarks for basic and comprehensive validation on large documents.
 
 use crate::common::generate_large_script;
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
+use std::hint::black_box;
 use reassarus_editor::core::EditorDocument;
 
 /// Benchmark validation on large documents

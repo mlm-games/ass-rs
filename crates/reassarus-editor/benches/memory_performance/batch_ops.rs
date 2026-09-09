@@ -1,7 +1,8 @@
 //! Benchmarks for batched style and tag operations on large documents.
 
 use crate::common::generate_large_script;
-use criterion::{black_box, Criterion};
+use criterion::{Criterion};
+use std::hint::black_box;
 use reassarus_editor::commands::{
     BatchCommand, EditStyleCommand, EditorCommand, InsertTagCommand, RemoveTagCommand,
     ReplaceTagCommand,

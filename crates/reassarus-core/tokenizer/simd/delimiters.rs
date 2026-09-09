@@ -59,16 +59,16 @@ fn scan_delimiters_simd_impl(bytes: &[u8]) -> Option<usize> {
     for (chunk_idx, chunk) in chunks.iter().enumerate() {
         let simd_chunk = u8x16::from(*chunk);
 
-        let mask = simd_chunk.cmp_eq(delim_colon)
-            | simd_chunk.cmp_eq(delim_comma)
-            | simd_chunk.cmp_eq(delim_open_brace)
-            | simd_chunk.cmp_eq(delim_close_brace)
-            | simd_chunk.cmp_eq(delim_open_bracket)
-            | simd_chunk.cmp_eq(delim_close_bracket)
-            | simd_chunk.cmp_eq(delim_newline)
-            | simd_chunk.cmp_eq(delim_carriage);
+        let mask = simd_chunk.simd_eq(delim_colon)
+            | simd_chunk.simd_eq(delim_comma)
+            | simd_chunk.simd_eq(delim_open_brace)
+            | simd_chunk.simd_eq(delim_close_brace)
+            | simd_chunk.simd_eq(delim_open_bracket)
+            | simd_chunk.simd_eq(delim_close_bracket)
+            | simd_chunk.simd_eq(delim_newline)
+            | simd_chunk.simd_eq(delim_carriage);
 
-        let mask_bits = mask.move_mask();
+        let mask_bits = mask.to_bitmask();
         if mask_bits != 0 {
             let first_match = mask_bits.trailing_zeros() as usize;
             return Some(chunk_idx * 16 + first_match);

@@ -1,7 +1,7 @@
 //! Text, dialogue, and linting analysis benchmark functions for
 //! `parser_benchmarks`.
 
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
 use reassarus_core::{
     analysis::{
         events::{dialogue_info::DialogueInfo, text_analysis::TextAnalysis},
@@ -12,6 +12,7 @@ use reassarus_core::{
     parser::Script,
     utils::{create_test_event, generate_script_with_issues},
 };
+use std::hint::black_box;
 use std::hint::black_box as std_black_box;
 
 /// Benchmark text analysis performance

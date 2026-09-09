@@ -1,6 +1,7 @@
 //! Benchmarks for tag command operations.
 
-use criterion::{black_box, Criterion};
+use criterion::{Criterion};
+use std::hint::black_box;
 use reassarus_editor::commands::{InsertTagCommand, RemoveTagCommand, ReplaceTagCommand};
 use reassarus_editor::core::{EditorDocument, Position, Range};
 use reassarus_editor::EditorCommand;

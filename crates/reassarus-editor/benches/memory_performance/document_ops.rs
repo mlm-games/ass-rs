@@ -1,7 +1,8 @@
 //! Benchmarks for large document creation, parsing, and cloning.
 
 use crate::common::generate_large_script;
-use criterion::{black_box, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 use reassarus_editor::core::EditorDocument;
 
 /// Benchmark large document creation and parsing

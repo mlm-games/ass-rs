@@ -1,7 +1,8 @@
 //! Benchmark simple text search (case sensitivity and whole-word matching).
 
 use crate::common::generate_search_script;
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion};
+use std::hint::black_box;
 use reassarus_editor::{
     core::EditorDocument,
     utils::search::{DocumentSearch, DocumentSearchImpl, SearchOptions, SearchScope},
