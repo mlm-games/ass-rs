@@ -1,0 +1,155 @@
+[package]
+name = "reassarus-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "High-performance ASS subtitle format parser and analyzer"
+homepage = "https://github.com/wiedymi/reassarus"
+documentation = "https://docs.rs/reassarus-core"
+keywords = ["subtitle", "ass", "ssa", "parser", "aegisub"]
+categories = ["parsing", "multimedia", "text-processing"]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+# Workspace dependencies
+thiserror.workspace = true
+ahash.workspace = true
+bitflags.workspace = true
+
+# Feature-gated dependencies
+hashbrown = { workspace = true, optional = true }
+bumpalo = { workspace = true, optional = true }
+wide = { workspace = true, optional = true }
+unicode-linebreak = { workspace = true, optional = true }
+# Explicit (not workspace): needs alloc-only serde, but workspace serde has
+# default-features on and cargo ignores `default-features = false` overrides
+# on workspace-inherited deps.
+serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+criterion = { workspace = true, optional = true }
+
+[dev-dependencies]
+# JSON (de)serialization used only by serde round-trip tests
+serde_json.workspace = true
+
+[features]
+# Default: Full-featured parser for desktop applications (matches reassarus-editor)
+default = ["full"]
+
+# --- Main Core Flavors (unified with reassarus-editor) ---
+
+# Provides the absolute minimum for a functional, performant parser.
+# This is suitable for lightweight integrations or when only core parsing is needed.
+# It enables alloc-only dependencies, making it compatible with `nostd`.
+minimal = [
+    "nostd",        # Use hashbrown instead of std HashMap for no_std compatibility
+    "analysis",     # Core analysis features
+    "plugins",      # Extension registry support  
+    "stream",       # Essential for incremental parsing performance
+]
+
+# Provides all features for a rich, full-featured ASS subtitle parser.
+# This includes the same core features as minimal but with std support instead of nostd,
+# plus advanced capabilities like SIMD, arena allocation, unicode support, and serialization.
+# It explicitly enables `std` support.
+full = [
+    "std",          # Standard library support (instead of nostd)
+    "analysis",     # Core analysis features
+    "plugins",      # Extension registry support
+    "stream",       # Essential for incremental parsing performance
+    "simd",         # SIMD acceleration for maximum performance
+    "arena",        # Arena allocation for reduced allocations
+    "unicode-wrap", # Unicode linebreak support for libass 0.17.4+ compatibility
+    "serde",        # Serialization support
+]
+
+# --- Granular Features (typically enabled by 'minimal' or 'full') ---
+
+# Platform support (mutually exclusive)
+std = ["serde?/std"]      # Standard library support (enabled by 'full')
+nostd = ["dep:hashbrown"] # nostd compatibility (mutually exclusive with std)
+
+# Core functionality (enabled by 'minimal')
+analysis = []     # Enable linting and deep analysis
+plugins = []      # Extension registry support
+stream = []       # Chunked/streaming input support
+
+# Advanced features (enabled by 'full')
+unicode-wrap = ["dep:unicode-linebreak"] # Unicode linebreak support (UAX #14) for libass 0.17.4+ compatibility
+serde = ["dep:serde"]       # Serialization support
+
+# Performance optimizations (enabled by 'full')
+simd = ["dep:wide"]     # SIMD-accelerated parsing
+simd-full = ["simd"]    # Extended SIMD for UUencode/hex parsing (20-40% faster)
+arena = ["dep:bumpalo"] # Arena allocation for parsing
+
+# Development features
+benches = ["dep:criterion"] # Benchmark integration
+
+[lints.rust]
+# Override workspace defaults with stricter rules for this crate
+unused_variables = "deny"
+unused_imports = "deny"
+unused_mut = "deny"
+unreachable_code = "warn"
+
+[lints.clippy]
+# Override workspace defaults with stricter rules for this crate
+all = "deny"
+pedantic = "warn"
+nursery = "warn"
+cargo = "warn"
+# Allow some cargo lints that conflict with project design
+negative_feature_names = "allow"
+# Allow some pedantic lints that conflict with project style
+module_name_repetitions = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+# Performance-related lints
+inefficient_to_string = "deny"
+string_add = "deny"
+string_add_assign = "deny"
+# Safety-related lints
+cast_ptr_alignment = "deny"
+fn_to_numeric_cast_any = "deny"
+# Documentation lints
+missing_docs_in_private_items = "warn"
+undocumented_unsafe_blocks = "deny"
+
+[[bench]]
+name = "parser_benchmarks" 
+harness = false
+required-features = ["benches"]
+
+[[bench]]
+name = "incremental_benchmarks"
+harness = false
+required-features = ["benches"]
+
+[[bench]]
+name = "memory_benchmarks"
+harness = false
+required-features = ["benches"]
+
+[[bin]]
+name = "validate-bench-results" 
+path = "bin/validate_bench_results.rs"
+required-features = ["benches"]
+
+[[bin]]
+name = "check-perf-regression"
+path = "bin/check_perf_regression.rs"
+required-features = ["benches"]
+
+[[bin]]
+name = "memory-profile"
+path = "bin/memory_profile.rs"
+required-features = ["benches"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

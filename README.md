@@ -1,9 +1,9 @@
 # ASS-RS
 
-[![Crates.io](https://img.shields.io/crates/v/ass-core.svg)](https://crates.io/crates/ass-core)
-[![Documentation](https://docs.rs/ass-core/badge.svg)](https://docs.rs/ass-core)
+[![Crates.io](https://img.shields.io/crates/v/reassarus-core.svg)](https://crates.io/crates/reassarus-core)
+[![Documentation](https://docs.rs/reassarus-core/badge.svg)](https://docs.rs/reassarus-core)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/wiedymi/ass-rs/workflows/CI/badge.svg)](https://github.com/wiedymi/ass-rs/actions)
+[![CI](https://github.com/wiedymi/reassarus/workflows/CI/badge.svg)](https://github.com/wiedymi/reassarus/actions)
 
 A modular, high-performance Rust implementation of the ASS (Advanced SubStation Alpha) subtitle format.
 
@@ -32,7 +32,7 @@ The ASS-RS ecosystem consists of modular, interoperable crates:
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│  ass-core   │────│ ass-renderer │    │ ass-editor  │
+│  reassarus-core   │────│ reassarus-renderer │    │ reassarus-editor  │
 │   (parser)  │    │  (rendering) │    │ (editing)   │
 └─────────────┘    └──────────────┘    └─────────────┘
        │                   │                   │
@@ -44,9 +44,9 @@ The ASS-RS ecosystem consists of modular, interoperable crates:
               └─────────────────────────┘
 ```
 
-- **`ass-core`**: Zero-copy parsing, analysis, and AST manipulation — *available, stable*
-- **`ass-editor`**: Interactive editing APIs with incremental updates — *available, stable*
-- **`ass-renderer`**: Multiple rendering backends (software, GPU, web) — *work in progress; software backend functional, GPU backends experimental*
+- **`reassarus-core`**: Zero-copy parsing, analysis, and AST manipulation — *available, stable*
+- **`reassarus-editor`**: Interactive editing APIs with incremental updates — *available, stable*
+- **`reassarus-renderer`**: Multiple rendering backends (software, GPU, web) — *work in progress; software backend functional, GPU backends experimental*
 - **`ass-cli`**: Command-line tools for processing and conversion — *planned*
 - **`ass-wasm`**: WebAssembly bindings for browser integration — *planned*
 - **`ass-benchmarks`**: Performance testing and libass comparisons — *planned*
@@ -66,13 +66,13 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ass-core = "0.1.1"
+reassarus-core = "0.1.1"
 ```
 
 Basic usage:
 
 ```rust
-use ass_core::Script;
+use reassarus_core::Script;
 
 let script_text = r#"
 [Script Info]
@@ -111,7 +111,7 @@ for section in script.sections() {
 }
 
 // For complex nested transforms, use the fixed parser
-use ass_core::analysis::events::parse_override_block_fixed;
+use reassarus_core::analysis::events::parse_override_block_fixed;
 
 let mut tags = Vec::new();
 let mut diagnostics = Vec::new();
@@ -125,7 +125,7 @@ Enable features as needed:
 
 ```toml
 [dependencies]
-ass-core = { version = "0.1", features = ["simd", "arena", "serde"] }
+reassarus-core = { version = "0.1", features = ["simd", "arena", "serde"] }
 ```
 
 - **`analysis`** (default): Deep analysis and linting capabilities
@@ -158,8 +158,8 @@ cargo +nightly fuzz run tokenizer
 
 ```bash
 # Clone repository
-git clone https://github.com/wiedymi/ass-rs.git
-cd ass-rs
+git clone https://github.com/wiedymi/reassarus.git
+cd reassarus
 
 # Run tests
 cargo test --all-features

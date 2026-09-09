@@ -32,17 +32,17 @@ jobs:
     
     - name: Run Core Parser Benchmarks
       run: |
-        cd crates/ass-core
+        cd crates/reassarus-core
         cargo bench --features=benches --bench parser_benchmarks
         
     - name: Run Incremental Parsing Benchmarks
       run: |
-        cd crates/ass-core
+        cd crates/reassarus-core
         cargo bench --features=benches --bench incremental_benchmarks
     
     - name: Validate Performance Targets
       run: |
-        cd crates/ass-core
+        cd crates/reassarus-core
         # Skip validation for now since JSON output was removed
         echo "Benchmarks completed successfully"
     
@@ -72,7 +72,7 @@ jobs:
     - name: Benchmark Base Branch
       run: |
         git checkout ${{ github.base_ref }}
-        cd crates/ass-core
+        cd crates/reassarus-core
         cargo bench --features=benches
         # Save benchmark results
         cp -r target/criterion target/criterion-base || true
@@ -80,14 +80,14 @@ jobs:
     - name: Benchmark PR Branch
       run: |
         git checkout ${{ github.head_ref }}
-        cd crates/ass-core
+        cd crates/reassarus-core
         cargo bench --features=benches
         # Save benchmark results
         cp -r target/criterion target/criterion-pr || true
         
     - name: Compare Performance
       run: |
-        cd crates/ass-core
+        cd crates/reassarus-core
         # Compare performance (simplified)
         echo "Performance comparison would go here"
         echo "Base results in target/criterion-base"
@@ -95,7 +95,7 @@ jobs:
         
     - name: Performance Regression Report
       run: |
-        cd crates/ass-core
+        cd crates/reassarus-core
         if [ -d target/criterion ]; then
           echo "Performance comparison report available"
           # Extract key metrics and check for regressions
@@ -119,7 +119,7 @@ jobs:
     
     - name: Run Full Benchmark Suite
       run: |
-        cd crates/ass-core
+        cd crates/reassarus-core
         cargo bench --features=benches,simd,arena
         
     - name: Archive Results

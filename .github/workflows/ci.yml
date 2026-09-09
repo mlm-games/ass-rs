@@ -28,15 +28,15 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # ass-renderer depends on std-only crates (fontdb, tiny-skia, rustybuzz),
+        # reassarus-renderer depends on std-only crates (fontdb, tiny-skia, rustybuzz),
         # so the no_std-flavored combos are scoped to the no_std-capable crates,
         # matching the dedicated nostd build job below. The renderer is still
         # fully linted by the `full` / `full,simd-full` (--workspace) combos.
         include:
           - features: minimal
-            scope: -p ass-core -p ass-editor
+            scope: -p reassarus-core -p reassarus-editor
           - features: minimal,nostd
-            scope: -p ass-core -p ass-editor
+            scope: -p reassarus-core -p reassarus-editor
           - features: full
             scope: --workspace
           - features: full,simd-full
@@ -65,14 +65,14 @@ jobs:
           - full
           - minimal,nostd
           - full,simd-full
-        # ass-renderer is std-only (fontdb, tiny-skia, rustybuzz), so the
+        # reassarus-renderer is std-only (fontdb, tiny-skia, rustybuzz), so the
         # no_std-flavored feature combos are scoped to the no_std-capable
         # crates. `full` combos still exercise the whole workspace.
         include:
           - features: minimal
-            scope: -p ass-core -p ass-editor
+            scope: -p reassarus-core -p reassarus-editor
           - features: minimal,nostd
-            scope: -p ass-core -p ass-editor
+            scope: -p reassarus-core -p reassarus-editor
           - features: full
             scope: --workspace
           - features: full,simd-full
@@ -83,7 +83,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      # ass-renderer's compatibility tests rasterize text and need at least one
+      # reassarus-renderer's compatibility tests rasterize text and need at least one
       # system font with a sans-serif fallback; headless Linux runners ship none.
       - name: Install fonts (Linux)
         if: runner.os == 'Linux'
@@ -103,8 +103,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build no_std
         run: |
-          cargo build -p ass-core --no-default-features --features minimal,nostd
-          cargo build -p ass-editor --no-default-features --features minimal,nostd
+          cargo build -p reassarus-core --no-default-features --features minimal,nostd
+          cargo build -p reassarus-editor --no-default-features --features minimal,nostd
 
   # Check documentation
   doc:
@@ -132,8 +132,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run benchmarks
         run: |
-          cargo bench -p ass-core --features benches --no-run
-          cargo bench -p ass-editor --features dev-benches --no-run
+          cargo bench -p reassarus-core --features benches --no-run
+          cargo bench -p reassarus-editor --features dev-benches --no-run
 
   # Security audit
   security:

@@ -1,0 +1,167 @@
+[package]
+name = "reassarus-editor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-performance, ergonomic editor layer for ASS subtitles"
+homepage = "https://github.com/wiedymi/reassarus"
+documentation = "https://docs.rs/reassarus-editor"
+readme = "README.md"
+categories = ["multimedia::video", "text-editors", "parser-implementations"]
+keywords = ["ass", "subtitle", "editor", "ssa", "substation"]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+# Explicit (not workspace): needs default-features = false, which cargo
+# ignores on workspace-inherited deps.
+reassarus-core = { version = "0.1.1", path = "../reassarus-core", default-features = false }
+thiserror = { workspace = true, optional = true } # Only enabled with `std`
+
+# Rope data structure for text editing (feature-gated)
+ropey = { workspace = true, optional = true }
+
+# Arena allocator for pooling histories and deltas (feature-gated).
+# Explicit: needs default-features = false for nostd (workspace bumpalo has
+# defaults on for reassarus-core).
+bumpalo = { version = "3", default-features = false, optional = true }
+
+# FST-based search indexing (feature-gated, requires std)
+fst = { workspace = true, optional = true }
+
+# For multi-threading support (feature-gated, requires std)
+parking_lot = { workspace = true, optional = true }
+
+# For async support (feature-gated, requires std)
+futures = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+# For serialization support (feature-gated, requires std)
+serde = { workspace = true, optional = true }
+
+# For nostd support (alloc-only)
+hashbrown = { workspace = true, optional = true }
+
+# For format conversion regex patterns (requires std)
+regex = { workspace = true, optional = true }
+
+# For compile-time assertions
+static_assertions = { workspace = true, optional = true }
+
+# WASM compatibility override
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { workspace = true, features = ["wasm_js"] }
+
+[dev-dependencies]
+criterion.workspace = true
+tempfile.workspace = true
+pretty_assertions.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "incremental_parsing"
+harness = false
+required-features = ["stream"]
+
+[[bench]]
+name = "editor_commands"
+harness = false
+required-features = ["full"]
+
+[[bench]]
+name = "search_performance"
+harness = false
+required-features = ["full"]
+
+[[bench]]
+name = "memory_performance"
+harness = false
+required-features = ["full"]
+
+[features]
+# Default: A fully-featured editor experience for desktop applications.
+default = ["full"]
+
+# --- Main Editor Flavors ---
+
+# Provides the absolute minimum for a functional, performant text editor.
+# This is suitable for lightweight integrations or when only core editing is needed.
+# It enables alloc-only dependencies, making it compatible with `nostd`.
+minimal = [
+    "reassarus-core/minimal", # Core minimal features from reassarus-core
+    "rope",         # Rope data structure for efficient text editing
+    "arena",        # Arena allocator for pooling histories and deltas
+    "stream",       # Essential for incremental parsing performance
+    "dep:hashbrown",    # HashMap support for no_std environments
+]
+
+# Provides all features for a rich, full-featured ASS subtitle editor.
+# This builds upon 'minimal' by adding advanced capabilities like analysis,
+# extensions, format conversion, advanced search, and concurrency.
+# It explicitly enables `std` and `thiserror` (which requires `std`).
+full = [
+    "reassarus-core/full", # All reassarus-core features
+    "minimal",      # Start with the core minimal set (which is alloc-only)
+    "std",          # Standard library support
+    "analysis",     # Script analysis and linting
+    "plugins",      # Extension system (e.g., built-in syntax highlighting, auto-complete)
+    "formats",      # Import/export format support (SRT, WebVTT)
+    "search-index", # FST-based advanced search for large documents
+    "concurrency",  # Multi-threading and async support for UI responsiveness
+    "serde",        # Serialization for editor state (e.g., saving/loading)
+    "dep:thiserror",# `thiserror` requires `std`
+]
+
+# --- Granular Features (typically enabled by 'minimal' or 'full') ---
+
+# Standard library support. Enabled by 'full'.
+# Propagates `std` to `reassarus-core`, and enables std for ropey and bumpalo.
+std = ["reassarus-core/std", "ropey/default", "bumpalo/std"]
+
+# Core parsing and analysis features from reassarus-core.
+analysis = ["reassarus-core/analysis"]
+plugins = ["reassarus-core/plugins"]
+stream = ["reassarus-core/stream"] # Essential for incremental parsing performance
+
+# Editor-specific dependencies.
+rope = ["dep:ropey"] # Rope data structure for efficient text editing
+arena = ["dep:bumpalo"] # Arena allocator for pooling histories and deltas
+formats = ["dep:regex", "std"] # `regex` and format conversion require `std`
+search-index = ["dep:fst", "std"] # `fst` requires `std`
+serde = ["dep:serde", "reassarus-core/serde", "std"] # `serde` requires `std`
+
+# Concurrency and asynchronous operation support.
+concurrency = ["multi-thread", "async", "std", "dep:static_assertions"] # Concurrency features require `std`
+multi-thread = ["dep:parking_lot", "std"]
+async = ["dep:futures", "dep:tokio", "std"]
+
+# --- Optional Performance Optimizations ---
+
+# SIMD acceleration features from reassarus-core. Enable for maximum parsing performance.
+simd = ["reassarus-core/simd"]
+simd-full = ["reassarus-core/simd-full"]
+
+# --- Specialized Build Targets ---
+
+# No-standard library support for embedded/WASM environments.
+# This feature is mutually exclusive with 'std'.
+# To use this, you would typically build with `--no-default-features --features minimal,nostd`.
+nostd = [
+    "dep:hashbrown",
+    "reassarus-core/nostd",
+    # ropey and bumpalo are configured with default-features=false to work in no_std
+    # environments. `nostd` just needs to ensure `std` isn't enabled.
+]
+
+# --- Development Features ---
+
+# Features primarily used during development, such as benchmarks.
+dev-benches = []
+
+# [[bench]]
+# name = "editor_benchmarks"
+# harness = false
+# required-features = ["benches"]

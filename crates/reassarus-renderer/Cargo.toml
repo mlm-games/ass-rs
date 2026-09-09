@@ -1,0 +1,150 @@
+[package]
+name = "reassarus-renderer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors = ["reassarus contributors"]
+description = "High-performance ASS subtitle renderer with modular backends"
+license = "MPL-2.0"
+repository.workspace = true
+keywords = ["ass", "subtitle", "renderer", "webgpu", "vulkan"]
+categories = ["multimedia::video", "graphics", "rendering"]
+
+[dependencies]
+# Core dependency
+reassarus-core.workspace = true
+
+# Text shaping and rendering
+rustybuzz.workspace = true
+tiny-skia.workspace = true
+fontdb.workspace = true
+ttf-parser.workspace = true
+
+# Parallelization
+rayon = { workspace = true, optional = true }
+
+# Repose GPU backend (scene emission + offscreen readback)
+repose-core = { workspace = true, optional = true }
+repose-render-wgpu = { workspace = true, optional = true }
+lyon_path = { workspace = true, optional = true }
+lyon_tessellation = { workspace = true, optional = true }
+
+# Utilities
+smallvec.workspace = true
+thiserror.workspace = true
+ahash.workspace = true
+bumpalo = { workspace = true, optional = true }
+
+# Serialization
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+# Debug and visualization
+image = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true
+env_logger.workspace = true
+
+[features]
+default = [
+    "analysis-integration",
+    "repose-backend",
+    "backend-probing",
+    "simd",
+    "image",
+    "serde",
+]
+
+# Main feature sets
+minimal = ["nostd", "analysis-integration"]
+full = [
+    "analysis-integration",
+    "repose-backend",
+    "software-backend",
+    "backend-probing",
+    "simd",
+    "image",
+    "serde",
+]
+
+# Core features
+analysis-integration = ["reassarus-core/analysis"]
+software-backend = ["rayon"]
+repose-backend = [
+    "dep:repose-core",
+    "dep:repose-render-wgpu",
+    "dep:lyon_path",
+    "dep:lyon_tessellation",
+]
+backend-probing = []
+backend-metrics = []
+
+# Performance features
+simd = ["reassarus-core/simd", "tiny-skia/simd"]
+arena = ["bumpalo", "reassarus-core/arena"]
+
+# Serialization
+serde = ["dep:serde", "dep:serde_json", "reassarus-core/serde"]
+
+# Debug features
+image = ["dep:image"]
+
+# No-std support (software backend only; the Repose backend needs std + GPU)
+nostd = ["reassarus-core/nostd"]
+
+# Dev-only: link native libass (vcpkg on Windows / pkg-config elsewhere) to A/B
+# compare the software backend against libass. Requires libass to be installed;
+# excluded from default/full so normal builds never need the native library.
+libass-compare = []
+
+# Unicode wrapping support
+unicode-wrap = ["reassarus-core/unicode-wrap"]
+
+# Development features
+benches = []
+docs = [
+    "full",
+    "repose-backend",
+    "unicode-wrap",
+    "plugins",
+    "benches",
+] # Safe feature set for documentation
+
+# Plugin system support
+plugins = []
+
+# libass discovery for the dev-only `libass-compare` feature (see build.rs).
+[target.'cfg(windows)'.build-dependencies]
+vcpkg.workspace = true
+
+[target.'cfg(not(windows))'.build-dependencies]
+pkg-config.workspace = true
+
+[[bench]]
+name = "render_benchmarks"
+harness = false
+required-features = ["benches"]
+
+[[example]]
+name = "libass_compare"
+required-features = ["software-backend", "image", "analysis-integration"]
+
+[[example]]
+name = "libass_ffi_compare"
+required-features = [
+    "software-backend",
+    "image",
+    "analysis-integration",
+    "libass-compare",
+]
+
+[[example]]
+name = "libass_bench"
+required-features = [
+    "software-backend",
+    "analysis-integration",
+    "libass-compare",
+]

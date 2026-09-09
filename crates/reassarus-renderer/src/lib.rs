@@ -1,0 +1,48 @@
+//! ASS subtitle renderer with modular backend support
+//!
+//! `reassarus-renderer` provides high-performance subtitle rendering with support for
+//! multiple backends including software (CPU), hardware (Vulkan/Metal), and web
+//! (WebGPU/WebGL).
+
+#![cfg_attr(feature = "nostd", no_std)]
+#![deny(unsafe_code)] // Changed from forbid to allow overrides in FFI modules
+#![warn(missing_docs)]
+#![allow(missing_docs)] // Allow missing docs for struct fields to reduce noise
+#![allow(dead_code)] // Allow dead code for work-in-progress features
+#![allow(unused_variables)] // Allow unused variables in development code
+
+#[cfg(feature = "nostd")]
+extern crate alloc;
+
+pub mod animation;
+pub mod backends;
+pub mod cache;
+pub mod collision;
+#[cfg(not(feature = "nostd"))]
+/// Debug and analysis tools for subtitle rendering
+pub mod debug;
+pub mod layout;
+pub mod pipeline;
+pub mod plugin;
+pub mod renderer;
+pub mod utils;
+
+pub use backends::{BackendType, RenderBackend};
+#[cfg(not(feature = "nostd"))]
+pub use debug::{DebugPlayer, FrameAnalyzer, FrameInspector, PlayerFrame};
+pub use pipeline::{Pipeline, PipelineStage};
+pub use plugin::{EffectPlugin, PluginRegistry};
+pub use renderer::{Frame, RenderContext, Renderer};
+pub use utils::RenderError;
+
+#[cfg(feature = "backend-metrics")]
+pub use backends::BackendMetrics;
+
+#[cfg(feature = "analysis-integration")]
+pub use reassarus_core::analysis::styles::ResolvedStyle;
+pub use reassarus_core::parser::ast::EventType;
+/// Re-export commonly used types from reassarus-core
+pub use reassarus_core::parser::{Event, Script, Section, Style};
+
+/// Library version
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

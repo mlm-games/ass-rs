@@ -10,3 +10,4 @@ tarpaulin-report.html
 test_output/
 examples_output/
 .libass/
+temp/ #for libass ref.
