@@ -55,12 +55,10 @@ impl Libass {
             if library.is_null() {
                 return Err(RenderError::BackendError("ass_library_init failed".into()));
             }
-            let renderer = sys::reassarus_renderer_init(library);
+            let renderer = sys::ass_renderer_init(library);
             if renderer.is_null() {
                 sys::ass_library_done(library);
-                return Err(RenderError::BackendError(
-                    "reassarus_renderer_init failed".into(),
-                ));
+                return Err(RenderError::BackendError("ass_renderer_init failed".into()));
             }
             sys::ass_set_frame_size(renderer, width as c_int, height as c_int);
             sys::ass_set_storage_size(renderer, width as c_int, height as c_int);
@@ -211,7 +209,7 @@ impl Drop for Libass {
     fn drop(&mut self) {
         // SAFETY: both handles were created in `new` and freed only here.
         unsafe {
-            sys::reassarus_renderer_done(self.renderer);
+            sys::ass_renderer_done(self.renderer);
             sys::ass_library_done(self.library);
         }
     }

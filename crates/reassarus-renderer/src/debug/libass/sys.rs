@@ -25,8 +25,8 @@ extern "C" {
     pub fn ass_library_init() -> *mut c_void;
     pub fn ass_library_done(library: *mut c_void);
     pub fn ass_set_fonts_dir(library: *mut c_void, fonts_dir: *const c_char);
-    pub fn reassarus_renderer_init(library: *mut c_void) -> *mut c_void;
-    pub fn reassarus_renderer_done(renderer: *mut c_void);
+    pub fn ass_renderer_init(library: *mut c_void) -> *mut c_void;
+    pub fn ass_renderer_done(renderer: *mut c_void);
     pub fn ass_set_frame_size(renderer: *mut c_void, w: c_int, h: c_int);
     pub fn ass_set_storage_size(renderer: *mut c_void, w: c_int, h: c_int);
     pub fn ass_set_fonts(

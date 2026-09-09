@@ -147,26 +147,28 @@ impl TransformAnimation {
     }
 
     /// Calculate interpolation progress for current time
-    pub fn calculate_progress(&self, current_ms: u32) -> f32 {
-        if current_ms <= self.start_ms {
+    pub fn calculate_progress(&self, current_ms: u64) -> f32 {
+        let start_ms = u64::from(self.start_ms);
+        let end_ms = u64::from(self.end_ms);
+        if current_ms <= start_ms {
             return 0.0;
         }
-        if self.end_ms > 0 && current_ms >= self.end_ms {
+        if self.end_ms > 0 && current_ms >= end_ms {
             return 1.0;
         }
 
         let duration = if self.end_ms > 0 {
-            self.end_ms - self.start_ms
+            end_ms - start_ms
         } else {
             // Use full line duration if end time not specified
-            current_ms - self.start_ms
+            current_ms - start_ms
         };
 
         if duration == 0 {
             return 1.0;
         }
 
-        let linear_progress = (current_ms - self.start_ms) as f32 / duration as f32;
+        let linear_progress = (current_ms - start_ms) as f32 / duration as f32;
 
         // Apply acceleration curve
         apply_acceleration_curve(linear_progress, self.accel)

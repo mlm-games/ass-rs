@@ -16,7 +16,8 @@ pub struct Frame {
     buffer: Arc<Vec<u8>>,
     width: u32,
     height: u32,
-    timestamp: u32,
+    /// Frame time in milliseconds on the renderer's native clock.
+    timestamp: u64,
     format: PixelFormat,
 }
 
@@ -33,7 +34,7 @@ pub enum PixelFormat {
 
 impl Frame {
     /// Create a new frame with the given buffer
-    pub fn new(buffer: Vec<u8>, width: u32, height: u32, timestamp: u32) -> Self {
+    pub fn new(buffer: Vec<u8>, width: u32, height: u32, timestamp: u64) -> Self {
         Self {
             buffer: Arc::new(buffer),
             width,
@@ -53,7 +54,7 @@ impl Frame {
         buffer: Vec<u8>,
         width: u32,
         height: u32,
-        timestamp: u32,
+        timestamp: u64,
         format: PixelFormat,
     ) -> Self {
         Self {
@@ -66,14 +67,14 @@ impl Frame {
     }
 
     /// Create an empty frame (transparent)
-    pub fn empty(width: u32, height: u32, timestamp: u32) -> Self {
+    pub fn empty(width: u32, height: u32, timestamp: u64) -> Self {
         let size = (width * height * 4) as usize;
         Self::new(vec![0; size], width, height, timestamp)
     }
 
     /// Clone this frame sharing its pixel buffer (O(1)) but with a new timestamp.
     /// Used to serve a cached static frame for the current time without copying.
-    pub fn with_timestamp(&self, timestamp: u32) -> Self {
+    pub fn with_timestamp(&self, timestamp: u64) -> Self {
         Self {
             buffer: Arc::clone(&self.buffer),
             timestamp,
@@ -111,9 +112,14 @@ impl Frame {
         self.height
     }
 
-    /// Get frame timestamp in centiseconds
-    pub fn timestamp(&self) -> u32 {
+    /// Get frame timestamp in milliseconds (native renderer clock).
+    pub fn timestamp(&self) -> u64 {
         self.timestamp
+    }
+
+    /// Get frame timestamp in centiseconds (legacy; truncated).
+    pub fn timestamp_cs(&self) -> u32 {
+        (self.timestamp / 10).min(u64::from(u32::MAX)) as u32
     }
 
     /// Get pixel format

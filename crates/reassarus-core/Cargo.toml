@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 readme = "README.md"
 description = "High-performance ASS subtitle format parser and analyzer"
-homepage = "https://github.com/wiedymi/reassarus"
+homepage = "https://github.com/mlm-games/reassarus"
 documentation = "https://docs.rs/reassarus-core"
 keywords = ["subtitle", "ass", "ssa", "parser", "aegisub"]
 categories = ["parsing", "multimedia", "text-processing"]
@@ -29,7 +29,10 @@ unicode-linebreak = { workspace = true, optional = true }
 # Explicit (not workspace): needs alloc-only serde, but workspace serde has
 # default-features on and cargo ignores `default-features = false` overrides
 # on workspace-inherited deps.
-serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+serde = { version = "1", optional = true, default-features = false, features = [
+    "derive",
+    "alloc",
+] }
 criterion = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -46,10 +49,10 @@ default = ["full"]
 # This is suitable for lightweight integrations or when only core parsing is needed.
 # It enables alloc-only dependencies, making it compatible with `nostd`.
 minimal = [
-    "nostd",        # Use hashbrown instead of std HashMap for no_std compatibility
-    "analysis",     # Core analysis features
-    "plugins",      # Extension registry support  
-    "stream",       # Essential for incremental parsing performance
+    "nostd",    # Use hashbrown instead of std HashMap for no_std compatibility
+    "analysis", # Core analysis features
+    "plugins",  # Extension registry support  
+    "stream",   # Essential for incremental parsing performance
 ]
 
 # Provides all features for a rich, full-featured ASS subtitle parser.
@@ -74,13 +77,15 @@ std = ["serde?/std"]      # Standard library support (enabled by 'full')
 nostd = ["dep:hashbrown"] # nostd compatibility (mutually exclusive with std)
 
 # Core functionality (enabled by 'minimal')
-analysis = []     # Enable linting and deep analysis
-plugins = []      # Extension registry support
-stream = []       # Chunked/streaming input support
+analysis = [] # Enable linting and deep analysis
+plugins = []  # Extension registry support
+stream = []   # Chunked/streaming input support
 
 # Advanced features (enabled by 'full')
-unicode-wrap = ["dep:unicode-linebreak"] # Unicode linebreak support (UAX #14) for libass 0.17.4+ compatibility
-serde = ["dep:serde"]       # Serialization support
+unicode-wrap = [
+    "dep:unicode-linebreak",
+] # Unicode linebreak support (UAX #14) for libass 0.17.4+ compatibility
+serde = ["dep:serde"] # Serialization support
 
 # Performance optimizations (enabled by 'full')
 simd = ["dep:wide"]     # SIMD-accelerated parsing
@@ -121,7 +126,7 @@ missing_docs_in_private_items = "warn"
 undocumented_unsafe_blocks = "deny"
 
 [[bench]]
-name = "parser_benchmarks" 
+name = "parser_benchmarks"
 harness = false
 required-features = ["benches"]
 
@@ -136,7 +141,7 @@ harness = false
 required-features = ["benches"]
 
 [[bin]]
-name = "validate-bench-results" 
+name = "validate-bench-results"
 path = "bin/validate_bench_results.rs"
 required-features = ["benches"]
 

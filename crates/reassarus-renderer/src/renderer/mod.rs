@@ -78,6 +78,14 @@ impl Renderer {
 
     /// Render a frame for the given script at the specified time
     pub fn render_frame(&mut self, script: &Script, time_cs: u32) -> Result<Frame, RenderError> {
+        self.render_frame_ms(script, u64::from(time_cs) * 10)
+    }
+
+    /// Render a frame at a millisecond timestamp (native renderer clock).
+    ///
+    /// Sub-centisecond times interpolate animations smoothly instead of
+    /// stepping every 10ms, matching libass (which takes milliseconds).
+    pub fn render_frame_ms(&mut self, script: &Script, time_ms: u64) -> Result<Frame, RenderError> {
         // Extract script resolution and update context
         for section in script.sections() {
             if let reassarus_core::parser::Section::ScriptInfo(info) = section {
@@ -91,14 +99,14 @@ impl Renderer {
             }
         }
 
-        let active = self.event_selector.select_active(script, time_cs)?;
+        let active = self.event_selector.select_active_ms(script, time_ms)?;
         let events = active.events;
 
         if events.is_empty() {
             return Ok(Frame::empty(
                 self.context.width(),
                 self.context.height(),
-                time_cs,
+                time_ms,
             ));
         }
 
@@ -117,7 +125,7 @@ impl Renderer {
             (cache_key.as_ref(), self.frame_cache.as_ref())
         {
             if cached_key == key {
-                return Ok(cached.with_timestamp(time_cs));
+                return Ok(cached.with_timestamp(time_ms));
             }
         }
 
@@ -127,14 +135,14 @@ impl Renderer {
         self.pipeline.prepare_script(script, None)?;
         let layers = self
             .pipeline
-            .process_events(&events, time_cs, &self.context)?;
+            .process_events_ms(&events, time_ms, &self.context)?;
         let frame_data = self.backend.composite_layers(&layers, &self.context)?;
 
         let frame = Frame::new(
             frame_data,
             self.context.width(),
             self.context.height(),
-            time_cs,
+            time_ms,
         );
         self.frame_cache = cache_key.map(|key| (key, frame.clone()));
         Ok(frame)
@@ -158,11 +166,22 @@ impl Renderer {
         time_cs: u32,
         previous_frame: &Frame,
     ) -> Result<Frame, RenderError> {
-        let active = self.event_selector.select_active(script, time_cs)?;
+        self.render_frame_incremental_ms(script, u64::from(time_cs) * 10, previous_frame)
+    }
+
+    /// Millisecond variant of
+    /// [`render_frame_incremental`](Renderer::render_frame_incremental).
+    pub fn render_frame_incremental_ms(
+        &mut self,
+        script: &Script,
+        time_ms: u64,
+        previous_frame: &Frame,
+    ) -> Result<Frame, RenderError> {
+        let active = self.event_selector.select_active_ms(script, time_ms)?;
         let events = active.events;
         let dirty_regions =
             self.pipeline
-                .compute_dirty_regions(&events, time_cs, previous_frame.timestamp())?;
+                .compute_dirty_regions_ms(&events, time_ms, previous_frame.timestamp())?;
 
         if dirty_regions.is_empty() {
             return Ok(previous_frame.clone());
@@ -171,7 +190,7 @@ impl Renderer {
         self.pipeline.prepare_script(script, None)?;
         let layers = self
             .pipeline
-            .process_events(&events, time_cs, &self.context)?;
+            .process_events_ms(&events, time_ms, &self.context)?;
         let frame_data = self.backend.composite_layers_incremental(
             &layers,
             &dirty_regions,
@@ -183,7 +202,7 @@ impl Renderer {
             frame_data,
             self.context.width(),
             self.context.height(),
-            time_cs,
+            time_ms,
         ))
     }
 

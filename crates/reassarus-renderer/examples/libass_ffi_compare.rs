@@ -10,9 +10,11 @@
 //! ```text
 //! cargo run --features full,libass-compare --example libass_ffi_compare -- \
 //!     --ass FILE --size 1280x720 --time 200 [--family Arial] [--out DIR] [--tol 16]
-//!     [--backend software|repose] [--fonts-dir DIR]
+//!     [--backend software|repose] [--fonts-dir DIR] [--time-ms 2005]
 //! ```
-//! `--time` is in centiseconds. `--fonts-dir` pins the SAME font set on both
+//! `--time` is in centiseconds; `--time-ms` (overrides `--time`) addresses a
+//! millisecond timestamp, for validating sub-centisecond interpolation
+//! against libass (which takes milliseconds). `--fonts-dir` pins the SAME font set on both
 //! sides (and disables uncontrolled system fallback there); without it both
 //! sides use system fonts so results line up with the ffmpeg harness.
 //! `--backend repose` renders our side through the Repose adapter and needs a
@@ -30,7 +32,7 @@ struct Config {
     ass: PathBuf,
     width: u32,
     height: u32,
-    time_cs: u32,
+    time_ms: u64,
     family: String,
     fonts_dir: Option<String>,
     backend: BackendType,
@@ -48,7 +50,9 @@ fn next_val(argv: &[String], i: &mut usize) -> Result<String, String> {
 fn parse_config() -> Result<Config, String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut ass: Option<PathBuf> = None;
-    let (mut width, mut height, mut time_cs, mut tol) = (1280u32, 720u32, 0u32, 16u8);
+    let (mut width, mut height, mut tol) = (1280u32, 720u32, 16u8);
+    let mut time_ms: Option<u64> = None;
+    let mut time_cs = 0u32;
     let mut family = String::from("Arial");
     let mut fonts_dir = None;
     let mut backend = BackendType::Software;
@@ -64,6 +68,13 @@ fn parse_config() -> Result<Config, String> {
                 height = h.parse().map_err(|_| format!("bad height {h}"))?;
             }
             "--time" => time_cs = next_val(&argv, &mut i)?.parse().map_err(|_| "bad --time")?,
+            "--time-ms" => {
+                time_ms = Some(
+                    next_val(&argv, &mut i)?
+                        .parse()
+                        .map_err(|_| "bad --time-ms")?,
+                );
+            }
             "--family" => family = next_val(&argv, &mut i)?,
             "--fonts-dir" => fonts_dir = Some(next_val(&argv, &mut i)?),
             "--backend" => {
@@ -80,11 +91,12 @@ fn parse_config() -> Result<Config, String> {
         i += 1;
     }
     let ass = ass.ok_or_else(|| "--ass is required".to_string())?;
+    let time_ms = time_ms.unwrap_or_else(|| u64::from(time_cs) * 10);
     Ok(Config {
         ass,
         width,
         height,
-        time_cs,
+        time_ms,
         family,
         fonts_dir,
         backend,
@@ -93,12 +105,22 @@ fn parse_config() -> Result<Config, String> {
     })
 }
 
-fn composite_over_black(rgba: &[u8], pixels: usize) -> Vec<u8> {
+/// Composite an RGBA frame over black to packed RGB.
+/// `premultiplied` selects the input convention: our software/Repose
+/// backends and the GPU readback are premultiplied (over black the bytes
+/// are already final), while the libass wrapper composites straight alpha
+/// (needs the multiply). Mixing these up double-dims translucent pixels on
+/// the premultiplied side.
+fn composite_over_black(rgba: &[u8], pixels: usize, premultiplied: bool) -> Vec<u8> {
     let mut out = vec![0u8; pixels * 3];
     for i in 0..pixels {
-        let a = u32::from(rgba[i * 4 + 3]);
-        for c in 0..3 {
-            out[i * 3 + c] = ((u32::from(rgba[i * 4 + c]) * a) / 255) as u8;
+        if premultiplied {
+            out[i * 3..i * 3 + 3].copy_from_slice(&rgba[i * 4..i * 4 + 3]);
+        } else {
+            let a = u32::from(rgba[i * 4 + 3]);
+            for c in 0..3 {
+                out[i * 3 + c] = ((u32::from(rgba[i * 4 + c]) * a) / 255) as u8;
+            }
         }
     }
     out
@@ -118,11 +140,14 @@ fn render_ours(cfg: &Config, script: &Script) -> Result<Vec<u8>, String> {
     };
     let mut renderer = Renderer::new(cfg.backend, ctx).map_err(|e| format!("renderer: {e}"))?;
     let frame = renderer
-        .render_frame(script, cfg.time_cs)
+        .render_frame_ms(script, cfg.time_ms)
         .map_err(|e| format!("render: {e}"))?;
+    // Both of our backends emit premultiplied RGBA (tiny-skia pixmap /
+    // GPU readback).
     Ok(composite_over_black(
         frame.data(),
         (cfg.width * cfg.height) as usize,
+        true,
     ))
 }
 
@@ -132,9 +157,10 @@ fn render_libass(cfg: &Config, ass_text: &str) -> Result<(Vec<u8>, Vec<LibassRec
     lib.set_fonts(cfg.fonts_dir.as_deref(), &cfg.family, use_system)
         .map_err(|e| format!("libass fonts: {e}"))?;
     let frame = lib
-        .render(ass_text, i64::from(cfg.time_cs) * 10)
+        .render(ass_text, cfg.time_ms as i64)
         .map_err(|e| format!("libass render: {e}"))?;
-    let rgb = composite_over_black(&frame.rgba, (cfg.width * cfg.height) as usize);
+    // The libass wrapper composites straight alpha.
+    let rgb = composite_over_black(&frame.rgba, (cfg.width * cfg.height) as usize, false);
     Ok((rgb, frame.rects))
 }
 
@@ -279,9 +305,9 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("save libass: {e}"))?;
 
     println!(
-        "ass: {}  t={}cs  {}x{}  tol={}  backend={:?}  fonts={}",
+        "ass: {}  t={}ms  {}x{}  tol={}  backend={:?}  fonts={}",
         cfg.ass.display(),
-        cfg.time_cs,
+        cfg.time_ms,
         cfg.width,
         cfg.height,
         cfg.tol,
@@ -299,6 +325,12 @@ fn run() -> Result<(), String> {
     print_bands("libass", &libass_bands, None);
     print_bands("ours  ", &ours_bands, Some(&libass_bands));
     println!("libass raw bitmaps: {}", rects.len());
+    for (n, r) in rects.iter().enumerate().take(12) {
+        println!(
+            "  libass bitmap {n}: x={} y={} w={} h={} color={:#010x}",
+            r.x, r.y, r.w, r.h, r.color
+        );
+    }
     println!("wrote: {}/{{ours,libass}}.png", cfg.out.display());
     Ok(())
 }

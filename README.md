@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/reassarus-core.svg)](https://crates.io/crates/reassarus-core)
 [![Documentation](https://docs.rs/reassarus-core/badge.svg)](https://docs.rs/reassarus-core)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/wiedymi/reassarus/workflows/CI/badge.svg)](https://github.com/wiedymi/reassarus/actions)
+[![CI](https://github.com/mlm-games/reassarus/workflows/CI/badge.svg)](https://github.com/mlm-games/reassarus/actions)
 
 A modular, high-performance Rust implementation of the ASS (Advanced SubStation Alpha) subtitle format.
 
@@ -158,7 +158,7 @@ cargo +nightly fuzz run tokenizer
 
 ```bash
 # Clone repository
-git clone https://github.com/wiedymi/reassarus.git
+git clone https://github.com/mlm-games/reassarus.git
 cd reassarus
 
 # Run tests

@@ -21,7 +21,8 @@ use std::{
 pub struct ProcessedTags {
     /// Position override (x, y)
     pub position: Option<(f32, f32)>,
-    /// Move command (x1, y1, x2, y2, t1, t2)
+    /// Move command (x1, y1, x2, y2, t1, t2); t1/t2 are event-relative
+    /// milliseconds on the renderer's native ms clock.
     pub movement: Option<(f32, f32, f32, f32, u32, u32)>,
     /// Origin point for rotation (x, y)
     pub origin: Option<(f32, f32)>,
@@ -126,17 +127,27 @@ pub struct ClipData {
     pub x2: f32,
     pub y2: f32,
     pub inverse: bool,
+    /// Vector (drawing) clip commands in script coordinates
+    /// (`\clip(m 0 0 l 100 0 ...)`), with the optional `,scale` suffix
+    /// factored into `drawing_scale`. `None` for rectangular clips.
+    pub drawing: Option<String>,
+    /// Trailing `,scale` of a drawing clip (multiplies drawing coords).
+    pub drawing_scale: f32,
 }
 
 #[derive(Debug, Clone)]
 pub struct FadeData {
     pub alpha_start: u8,
     pub alpha_end: u8,
+    /// Fade-in duration / complex-fade t1, in milliseconds.
     pub time_start: u32,
+    /// Fade-out duration / complex-fade t4, in milliseconds.
     pub time_end: u32,
     /// For complex fade with 7 parameters
     pub alpha_middle: Option<u8>,
+    /// Complex-fade t2-t1, in milliseconds.
     pub time_fade_in: Option<u32>,
+    /// Complex-fade t4-t3, in milliseconds.
     pub time_fade_out: Option<u32>,
 }
 
@@ -541,22 +552,19 @@ pub fn parse_move_args(args: &str) -> Option<(f32, f32, f32, f32, u32, u32)> {
         let x2 = parts[2].trim().parse::<f32>().ok()?;
         let y2 = parts[3].trim().parse::<f32>().ok()?;
 
-        // Times in \move are in milliseconds, need to convert to centiseconds
-        let t1_ms = if parts.len() > 4 {
+        // Times in \move are event-relative milliseconds, kept at full
+        // precision for the renderer's native ms clock.
+        let t1 = if parts.len() > 4 {
             parts[4].trim().parse::<u32>().unwrap_or(0)
         } else {
             0
         };
 
-        let t2_ms = if parts.len() > 5 {
+        let t2 = if parts.len() > 5 {
             parts[5].trim().parse::<u32>().unwrap_or(0)
         } else {
             0
         };
-
-        // Convert milliseconds to centiseconds
-        let t1 = t1_ms / 10;
-        let t2 = t2_ms / 10;
 
         return Some((x1, y1, x2, y2, t1, t2));
     }
@@ -583,10 +591,40 @@ pub fn parse_alpha(args: &str) -> Option<u8> {
         .map(|ass_alpha| 255 - ass_alpha)
 }
 
-/// Parse rectangular clip arguments from an ASS `\clip`/`\iclip` tag
-/// (`(x1,y1,x2,y2)`). Vector (drawing) clips are not handled here.
+/// Parse clip arguments: rectangular (`(x1,y1,x2,y2)`) or vector drawing
+/// (`(m 0 0 l 100 0 ...[, scale])`). Vector (drawing) clips were previously
+/// unhandled (silently dropped); they now parse for both backends.
 pub fn parse_clip_args(args: &str) -> Option<ClipData> {
     let args = args.trim_start_matches('(').trim_end_matches(')');
+    let trimmed = args.trim_start();
+    if trimmed
+        .chars()
+        .next()
+        .is_some_and(|c| c == 'm' || c == 'M' || c == 'n' || c == 'N')
+    {
+        // Drawing clip: optional trailing `,scale` multiplies the coords.
+        // (Spec drawings are space-separated, so a trailing `,number` is
+        // the scale; comma-separated drawings are non-conformant and would
+        // misparse here, same ambiguity libass accepts.)
+        let (drawing, scale) = match trimmed.rsplit_once(',') {
+            Some((cmds, s)) if s.trim().parse::<f32>().is_ok() => {
+                (cmds.trim(), s.trim().parse::<f32>().unwrap_or(1.0))
+            }
+            _ => (trimmed, 1.0),
+        };
+        if drawing.is_empty() {
+            return None;
+        }
+        return Some(ClipData {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.0,
+            y2: 0.0,
+            inverse: false,
+            drawing: Some(drawing.to_string()),
+            drawing_scale: scale,
+        });
+    }
     let parts: Vec<&str> = args.split(',').collect();
 
     if parts.len() == 4 {
@@ -601,6 +639,8 @@ pub fn parse_clip_args(args: &str) -> Option<ClipData> {
             x2,
             y2,
             inverse: false,
+            drawing: None,
+            drawing_scale: 1.0,
         });
     }
 
@@ -613,22 +653,19 @@ pub fn parse_fade_args(args: &str) -> Option<FadeData> {
     let parts: Vec<&str> = args.split(',').collect();
 
     if parts.len() >= 2 {
-        // Simple fade: fade_in_time, fade_out_time (in milliseconds)
+        // Simple fade: fade_in_time, fade_out_time (in milliseconds, kept
+        // at full precision for the native ms clock).
         if parts.len() == 2 {
             let fade_in_ms = parts[0].trim().parse::<u32>().ok()?;
             let fade_out_ms = parts[1].trim().parse::<u32>().ok()?;
 
-            // Convert milliseconds to centiseconds
-            let time_start = fade_in_ms / 10;
-            let time_end = fade_out_ms / 10;
-
             // For simple fade, we store durations not alpha values
             // The actual alpha calculation happens during rendering
             return Some(FadeData {
-                alpha_start: 0, // Not used for simple fade
-                alpha_end: 0,   // Not used for simple fade
-                time_start,     // Fade-in duration in centiseconds
-                time_end,       // Fade-out duration in centiseconds
+                alpha_start: 0,         // Not used for simple fade
+                alpha_end: 0,           // Not used for simple fade
+                time_start: fade_in_ms, // Fade-in duration in milliseconds
+                time_end: fade_out_ms,  // Fade-out duration in milliseconds
                 alpha_middle: None,
                 time_fade_in: None,
                 time_fade_out: None,
@@ -647,16 +684,10 @@ pub fn parse_fade_args(args: &str) -> Option<FadeData> {
             let alpha1 = parts[0].trim().parse::<u8>().ok()?;
             let alpha2 = parts[1].trim().parse::<u8>().ok()?;
             let alpha3 = parts[2].trim().parse::<u8>().ok()?;
-            let t1_ms = parts[3].trim().parse::<u32>().ok()?;
-            let t2_ms = parts[4].trim().parse::<u32>().ok()?;
-            let t3_ms = parts[5].trim().parse::<u32>().ok()?;
-            let t4_ms = parts[6].trim().parse::<u32>().ok()?;
-
-            // Convert milliseconds to centiseconds
-            let t1 = t1_ms / 10;
-            let t2 = t2_ms / 10;
-            let t3 = t3_ms / 10;
-            let t4 = t4_ms / 10;
+            let t1 = parts[3].trim().parse::<u32>().ok()?;
+            let t2 = parts[4].trim().parse::<u32>().ok()?;
+            let t3 = parts[5].trim().parse::<u32>().ok()?;
+            let t4 = parts[6].trim().parse::<u32>().ok()?;
 
             // Store the ASS alpha values as-is (00=opaque, FF=transparent)
             // They'll be inverted when applied

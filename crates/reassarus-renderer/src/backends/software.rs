@@ -401,7 +401,44 @@ impl SoftwareBackend {
 
         // Create clip mask if needed
         let clip_mask = data.effects.iter().find_map(|e| {
-            if let crate::pipeline::TextEffect::Clip {
+            if let crate::pipeline::TextEffect::VectorClip { path, inverse } = e {
+                // Drawing clip: fill the path itself (already in render
+                // coordinates). Inverse uses the same even-odd canvas trick
+                // as rectangular `\iclip` below.
+                let width = self.pixmap.width();
+                let height = self.pixmap.height();
+                if let Some(mut mask) = tiny_skia::Mask::new(width, height) {
+                    let mut builder = tiny_skia::PathBuilder::new();
+                    for seg in path.segments() {
+                        match seg {
+                            tiny_skia::PathSegment::MoveTo(p) => builder.move_to(p.x, p.y),
+                            tiny_skia::PathSegment::LineTo(p) => builder.line_to(p.x, p.y),
+                            tiny_skia::PathSegment::QuadTo(c, p) => {
+                                builder.quad_to(c.x, c.y, p.x, p.y);
+                            }
+                            tiny_skia::PathSegment::CubicTo(c1, c2, p) => {
+                                builder.cubic_to(c1.x, c1.y, c2.x, c2.y, p.x, p.y)
+                            }
+                            tiny_skia::PathSegment::Close => builder.close(),
+                        }
+                    }
+                    let fill_rule = if *inverse {
+                        builder.move_to(0.0, 0.0);
+                        builder.line_to(width as f32, 0.0);
+                        builder.line_to(width as f32, height as f32);
+                        builder.line_to(0.0, height as f32);
+                        builder.close();
+                        tiny_skia::FillRule::EvenOdd
+                    } else {
+                        tiny_skia::FillRule::Winding
+                    };
+                    if let Some(clip_path) = builder.finish() {
+                        mask.fill_path(&clip_path, fill_rule, true, Transform::identity());
+                        return Some(mask);
+                    }
+                }
+                None
+            } else if let crate::pipeline::TextEffect::Clip {
                 x1,
                 y1,
                 x2,
@@ -603,10 +640,14 @@ impl SoftwareBackend {
                         if let Some(mut temp_pixmap) = Pixmap::new(outline_width, outline_height) {
                             temp_pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
-                            // Draw outline to temporary pixmap
+                            // Draw outline to temporary pixmap. Glyph paths
+                            // live in baseline space (y≈0 at the baseline,
+                            // extending up by `ascent`), so the temp origin
+                            // sits `ascent` below the pad: otherwise caps
+                            // clip at the temp's top edge.
                             let temp_transform = Transform::from_translate(
                                 blur_size as f32 + axis_max,
-                                blur_size as f32 + axis_max,
+                                blur_size as f32 + axis_max + shaped.ascent,
                             );
 
                             let mut stroker = tiny_skia::PathStroker::new();
@@ -634,7 +675,7 @@ impl SoftwareBackend {
                             // Draw blurred outline to main pixmap
                             let blend_transform = base_transform.pre_translate(
                                 -(blur_size as f32) - axis_max,
-                                -(blur_size as f32) - axis_max,
+                                -(blur_size as f32) - axis_max - shaped.ascent,
                             );
 
                             let paint = tiny_skia::PixmapPaint {
@@ -710,7 +751,10 @@ impl SoftwareBackend {
                 // Draw shadow (if any) then outline then text into the temp
                 // pixmap, so the box blur below softens shadow, outline and fill
                 // together. The shadow goes down first as it sits behind the rest.
-                let temp_transform = Transform::from_translate(blur_size as f32, blur_size as f32);
+                // Paths live in baseline space (see above): the temp origin
+                // sits `ascent` below the pad.
+                let temp_transform =
+                    Transform::from_translate(blur_size as f32, blur_size as f32 + shaped.ascent);
                 if let Some((scolor, sx, sy)) = shadow_info {
                     let mut shadow_paint = tiny_skia::Paint {
                         anti_alias: true,
@@ -776,10 +820,11 @@ impl SoftwareBackend {
 
                 // Draw blurred result to main pixmap. Use baseline_y (the same
                 // vertical origin as the sharp path) so the blurred glyphs land on
-                // the text rather than floating above it as a halo.
+                // the text rather than floating above it as a halo; the temp's
+                // ascent offset is unwound here.
                 let blend_transform = Transform::from_translate(
                     data.x - blur_size as f32,
-                    baseline_y - blur_size as f32,
+                    baseline_y - blur_size as f32 - shaped.ascent,
                 );
                 let paint = tiny_skia::PixmapPaint {
                     blend_mode: tiny_skia::BlendMode::SourceOver,

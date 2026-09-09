@@ -14,7 +14,6 @@ use std::{
 
 use crate::collision::{BoundingBox, PositionedEvent};
 use crate::pipeline::{
-    animation::calculate_move_progress,
     drawing::process_drawing_commands,
     shaping::{shape_text_cached, GlyphRenderer},
     tag_processor::{KaraokeStyle, ProcessedTags},
@@ -155,8 +154,8 @@ impl SoftwarePipeline {
     fn apply_transform_animations(
         &self,
         tags: &mut ProcessedTags,
-        event_start_cs: u32,
-        current_time_cs: u32,
+        event_start_ms: u64,
+        current_time_ms: u64,
         default_colors: ([u8; 4], [u8; 4], [u8; 4], [u8; 4]), // primary, secondary, outline, shadow
         default_font_size: f32,
     ) {
@@ -164,12 +163,8 @@ impl SoftwarePipeline {
         for transform_data in &tags.transforms {
             let animation = &transform_data.animation;
 
-            // Calculate time relative to event start (convert to milliseconds for animation)
-            let relative_time_ms = if current_time_cs >= event_start_cs {
-                (current_time_cs - event_start_cs) * 10 // Convert centiseconds to milliseconds
-            } else {
-                0
-            };
+            // Time relative to event start on the native ms clock.
+            let relative_time_ms = current_time_ms.saturating_sub(event_start_ms);
 
             // Calculate animation progress (expects milliseconds)
             let progress = animation.calculate_progress(relative_time_ms);
@@ -448,7 +443,10 @@ impl SoftwarePipeline {
         for layer in layers {
             if let IntermediateLayer::Text(text) = layer {
                 let line_height = text.font_size / self.dpi_scale.max(0.01);
-                let width = text.text.chars().count() as f32 * text.font_size * 0.5;
+                let width = match &text.measured {
+                    Some(m) => m.spaced_width(text.spacing, text.text.chars().count()),
+                    None => text.text.chars().count() as f32 * text.font_size * 0.5,
+                };
                 min_x = min_x.min(text.x);
                 min_y = min_y.min(text.y);
                 max_x = max_x.max(text.x + width);
@@ -619,7 +617,7 @@ impl SoftwarePipeline {
     fn process_event(
         &mut self,
         event: &Event,
-        time_cs: u32,
+        time_ms: u64,
         context: &RenderContext,
     ) -> Result<Vec<IntermediateLayer>, RenderError> {
         // Get text segments with their individual tags
@@ -643,7 +641,7 @@ impl SoftwarePipeline {
                     &segments[0],
                     event,
                     style_cloned.as_ref(),
-                    time_cs,
+                    time_ms,
                     context,
                 );
             }
@@ -657,7 +655,7 @@ impl SoftwarePipeline {
             .cloned();
 
         // Process text segments with proper style inheritance
-        self.process_text_segments(segments, event, style_cloned.as_ref(), time_cs, context)
+        self.process_text_segments(segments, event, style_cloned.as_ref(), time_ms, context)
     }
 
     fn process_drawing_command(
@@ -665,7 +663,7 @@ impl SoftwarePipeline {
         segment: &TextSegment,
         _event: &Event,
         style: Option<&OwnedStyle>,
-        time_cs: u32,
+        time_ms: u64,
         context: &RenderContext,
     ) -> Result<Vec<IntermediateLayer>, RenderError> {
         let plain_text = &segment.text;
@@ -705,18 +703,27 @@ impl SoftwarePipeline {
                 // Scale from script coordinates to render coordinates
                 (px * scale_x, py * scale_y)
             } else if let Some((x1, y1, x2, y2, t1, t2)) = tags.movement {
-                // Movement times are relative to event start
-                let event_start_cs = _event.start_time_cs().unwrap_or(0);
-                let event_end_cs = _event.end_time_cs().unwrap_or(u32::MAX);
+                // Movement times are event-relative milliseconds on the native
+                // clock (kept untruncated at parse; the old cs path divided by
+                // 10 here and stepped every 10ms).
+                let event_start_ms = _event.start_time_ms().unwrap_or(0);
+                let event_end_ms = _event.end_time_ms().unwrap_or(u64::MAX);
 
                 // If t1 and t2 are both 0, movement spans the entire event duration
-                let (move_start_cs, move_end_cs) = if t1 == 0 && t2 == 0 {
-                    (event_start_cs, event_end_cs)
+                let (move_start_ms, move_end_ms) = if t1 == 0 && t2 == 0 {
+                    (event_start_ms, event_end_ms)
                 } else {
-                    (event_start_cs + t1, event_start_cs + t2)
+                    (
+                        event_start_ms + u64::from(t1),
+                        event_start_ms + u64::from(t2),
+                    )
                 };
 
-                let progress = calculate_move_progress(time_cs, move_start_cs, move_end_cs);
+                let progress = crate::pipeline::animation::calculate_progress_ms(
+                    time_ms,
+                    move_start_ms,
+                    move_end_ms,
+                );
                 let x = x1 + (x2 - x1) * progress;
                 let y = y1 + (y2 - y1) * progress;
                 // Scale from script coordinates to render coordinates
@@ -787,7 +794,7 @@ impl SoftwarePipeline {
         segments: Vec<TextSegment>,
         event: &Event,
         style: Option<&OwnedStyle>,
-        time_cs: u32,
+        time_ms: u64,
         context: &RenderContext,
     ) -> Result<Vec<IntermediateLayer>, RenderError> {
         let mut all_layers = Vec::new();
@@ -975,7 +982,7 @@ impl SoftwarePipeline {
             };
             let mut current_x = 0.0;
             let mut needs_initial_position = true;
-            let mut karaoke_accumulated_time = 0u32; // Track cumulative karaoke time for this line
+            let mut karaoke_accumulated_time_ms = 0u64; // Track cumulative karaoke time for this line
 
             for segment in line_segments {
                 let mut tags = segment.tags.clone();
@@ -986,7 +993,7 @@ impl SoftwarePipeline {
                     if drawing_mode > 0 {
                         // Process drawing commands
                         if let Ok(drawing_layers) =
-                            self.process_drawing_command(&segment, event, style, time_cs, context)
+                            self.process_drawing_command(&segment, event, style, time_ms, context)
                         {
                             for layer in drawing_layers {
                                 all_layers.push(layer);
@@ -997,7 +1004,7 @@ impl SoftwarePipeline {
                 }
 
                 // Apply transform animations if present
-                let event_start_cs = event.start_time_cs().unwrap_or(0);
+                let event_start_ms = event.start_time_ms().unwrap_or(0);
                 let default_colors = (
                     default_primary_color,
                     default_secondary_color,
@@ -1006,8 +1013,8 @@ impl SoftwarePipeline {
                 );
                 self.apply_transform_animations(
                     &mut tags,
-                    event_start_cs,
-                    time_cs,
+                    event_start_ms,
+                    time_ms,
                     default_colors,
                     default_font_size_base,
                 );
@@ -1038,7 +1045,7 @@ impl SoftwarePipeline {
                         &tags,
                         event,
                         context,
-                        time_cs,
+                        time_ms,
                         default_alignment,
                     );
 
@@ -1214,9 +1221,11 @@ impl SoftwarePipeline {
                 // Apply fade effect
                 if let Some(fade) = &tags.fade {
                     // For \fad(t1,t2), t1 is fade-in duration, t2 is fade-out duration
-                    // Calculate actual fade times relative to event
-                    let event_start = event.start_time_cs().unwrap_or(0);
-                    let event_end = event.end_time_cs().unwrap_or(u32::MAX);
+                    // Calculate actual fade times relative to event. All times on
+                    // the native ms clock (`FadeData` keeps milliseconds since
+                    // the parse-time `/10` truncation was removed).
+                    let event_start = event.start_time_ms().unwrap_or(0);
+                    let event_end = event.end_time_ms().unwrap_or(u64::MAX);
 
                     let fade_alpha = if let Some(alpha_mid) = fade.alpha_middle {
                         // Complex \fade(a1,a2,a3,t1,t2,t3,t4): a 5-segment piecewise
@@ -1228,18 +1237,18 @@ impl SoftwarePipeline {
                             alpha_mid as f32,
                             fade.alpha_end as f32,
                         );
-                        let t1 = event_start + fade.time_start;
-                        let t2 = t1 + fade.time_fade_in.unwrap_or(0);
-                        let t4 = event_start + fade.time_end;
-                        let t3 = t4.saturating_sub(fade.time_fade_out.unwrap_or(0));
-                        let ass_alpha = if time_cs <= t1 {
+                        let t1 = event_start + u64::from(fade.time_start);
+                        let t2 = t1 + u64::from(fade.time_fade_in.unwrap_or(0));
+                        let t4 = event_start + u64::from(fade.time_end);
+                        let t3 = t4.saturating_sub(u64::from(fade.time_fade_out.unwrap_or(0)));
+                        let ass_alpha = if time_ms <= t1 {
                             a1
-                        } else if time_cs < t2 {
-                            a1 + (a2 - a1) * (time_cs - t1) as f32 / (t2 - t1).max(1) as f32
-                        } else if time_cs <= t3 {
+                        } else if time_ms < t2 {
+                            a1 + (a2 - a1) * (time_ms - t1) as f32 / (t2 - t1).max(1) as f32
+                        } else if time_ms <= t3 {
                             a2
-                        } else if time_cs < t4 {
-                            a2 + (a3 - a2) * (time_cs - t3) as f32 / (t4 - t3).max(1) as f32
+                        } else if time_ms < t4 {
+                            a2 + (a3 - a2) * (time_ms - t3) as f32 / (t4 - t3).max(1) as f32
                         } else {
                             a3
                         };
@@ -1247,18 +1256,18 @@ impl SoftwarePipeline {
                         255.0 - ass_alpha
                     } else {
                         // Simple fade - times are durations
-                        let fade_in_end = event_start + fade.time_start;
-                        let fade_out_start = event_end.saturating_sub(fade.time_end);
+                        let fade_in_end = event_start + u64::from(fade.time_start);
+                        let fade_out_start = event_end.saturating_sub(u64::from(fade.time_end));
 
-                        if time_cs < fade_in_end {
+                        if time_ms < fade_in_end {
                             // During fade in
-                            let progress = (time_cs.saturating_sub(event_start)) as f32
-                                / fade.time_start.max(1) as f32;
+                            let progress = (time_ms.saturating_sub(event_start)) as f32
+                                / u64::from(fade.time_start.max(1)) as f32;
                             255.0 * progress.min(1.0)
-                        } else if time_cs >= fade_out_start && fade_out_start < event_end {
+                        } else if time_ms >= fade_out_start && fade_out_start < event_end {
                             // During fade out
-                            let progress = (event_end.saturating_sub(time_cs)) as f32
-                                / fade.time_end.max(1) as f32;
+                            let progress = (event_end.saturating_sub(time_ms)) as f32
+                                / u64::from(fade.time_end.max(1)) as f32;
                             255.0 * progress.min(1.0)
                         } else {
                             // Fully visible
@@ -1287,6 +1296,16 @@ impl SoftwarePipeline {
                     y: segment_y,
                     effects: SmallVec::new(),
                     spacing,
+                    // The same cached run used for layout above: backends size
+                    // clip/blur/layer rects and dirty regions from this instead
+                    // of glyph-count estimates.
+                    measured: Some(crate::pipeline::MeasuredBounds {
+                        width: shaped.width,
+                        height: shaped.height,
+                        baseline: shaped.baseline,
+                        ascent: shaped.ascent,
+                        descent: shaped.descent,
+                    }),
                 };
 
                 // Add effects
@@ -1376,10 +1395,14 @@ impl SoftwarePipeline {
                         .unwrap_or(default_shadow)
                 };
                 if shadow_x != 0.0 || shadow_y != 0.0 {
+                    // Full ASS depth, no empirical factor: libass 0.17.5 offsets
+                    // the shadow by exactly (depth, depth) — measured +6px for
+                    // Shadow=6 while we emitted +3px with the old `* 0.5`
+                    // (differential probe, DejaVu Sans 72px, 2026-09-09).
                     layer.effects.push(TextEffect::Shadow {
                         color: shadow_color,
-                        x_offset: shadow_x * 0.5, // Further reduce shadow to match libass
-                        y_offset: shadow_y * 0.5,
+                        x_offset: shadow_x,
+                        y_offset: shadow_y,
                     });
                 }
 
@@ -1441,13 +1464,33 @@ impl SoftwarePipeline {
 
                 // Add clip region if present (scale from script coordinates)
                 if let Some(clip) = &tags.clip {
-                    layer.effects.push(TextEffect::Clip {
-                        x1: clip.x1 * scale_x,
-                        y1: clip.y1 * scale_y,
-                        x2: clip.x2 * scale_x,
-                        y2: clip.y2 * scale_y,
-                        inverse: clip.inverse,
-                    });
+                    if let Some(commands) = &clip.drawing {
+                        // Vector (drawing) clip: parse in script coords, then
+                        // scale to render coords (drawing scale × resolution).
+                        let ds = clip.drawing_scale;
+                        if let Ok(Some(path)) =
+                            crate::pipeline::drawing::process_drawing_commands(commands)
+                        {
+                            if let Some(scaled) = crate::pipeline::drawing::scale_path(
+                                &path,
+                                scale_x * ds,
+                                scale_y * ds,
+                            ) {
+                                layer.effects.push(TextEffect::VectorClip {
+                                    path: scaled,
+                                    inverse: clip.inverse,
+                                });
+                            }
+                        }
+                    } else {
+                        layer.effects.push(TextEffect::Clip {
+                            x1: clip.x1 * scale_x,
+                            y1: clip.y1 * scale_y,
+                            x2: clip.x2 * scale_x,
+                            y2: clip.y2 * scale_y,
+                            inverse: clip.inverse,
+                        });
+                    }
                 }
 
                 // Handle baseline offset
@@ -1455,20 +1498,22 @@ impl SoftwarePipeline {
                     layer.y += baseline_offset;
                 }
 
-                // Handle karaoke - track per-syllable timing
+                // Handle karaoke - track per-syllable timing. `\k` durations are
+                // natively centiseconds, scaled to the ms clock here.
                 if let Some(karaoke) = &tags.karaoke {
                     // Calculate progress for THIS syllable based on cumulative timing
+                    let duration_ms = u64::from(karaoke.duration) * 10;
                     let syllable_start =
-                        event.start_time_cs().unwrap_or(0) + karaoke_accumulated_time;
-                    let syllable_end = syllable_start + karaoke.duration;
+                        event.start_time_ms().unwrap_or(0) + karaoke_accumulated_time_ms;
+                    let syllable_end = syllable_start + duration_ms;
 
-                    let progress = if time_cs < syllable_start {
+                    let progress = if time_ms < syllable_start {
                         0.0 // Not yet started
-                    } else if time_cs >= syllable_end {
+                    } else if time_ms >= syllable_end {
                         1.0 // Fully highlighted
                     } else {
                         // In progress
-                        (time_cs - syllable_start) as f32 / karaoke.duration as f32
+                        (time_ms - syllable_start) as f32 / duration_ms.max(1) as f32
                     };
 
                     // Unsung syllables use the secondary colour. `\2c` overrides are
@@ -1489,8 +1534,8 @@ impl SoftwarePipeline {
                         secondary: karaoke_secondary,
                     });
 
-                    // Accumulate time for next syllable
-                    karaoke_accumulated_time += karaoke.duration;
+                    // Accumulate time for next syllable (ms clock)
+                    karaoke_accumulated_time_ms += u64::from(karaoke.duration) * 10;
                 }
 
                 // Advance the pen to the end of this segment so the next run on the
@@ -1502,7 +1547,14 @@ impl SoftwarePipeline {
                     current_x += advance * font_scale_x;
                 }
 
-                all_layers.push(IntermediateLayer::Text(layer));
+                // libass emits nothing for the event — glyph, outline AND shadow
+                // — once the primary is (near-)fully transparent: differential
+                // probe (libass 0.17.5) shows `\1a&HFD&` renders but `\1a&HFE&`
+                // does not, i.e. primary opacity ≤ 1/255 culls the whole event.
+                // The pen still advances above; only the layer is dropped.
+                if layer.color[3] > 1 {
+                    all_layers.push(IntermediateLayer::Text(layer));
+                }
             }
 
             // Move to next line. Advance by the nominal line height (font size in
@@ -1520,7 +1572,7 @@ impl SoftwarePipeline {
         tags: &ProcessedTags,
         event: &Event,
         context: &RenderContext,
-        time_cs: u32,
+        time_ms: u64,
         default_alignment: u8,
     ) -> (f32, f32) {
         // Calculate scaling factors
@@ -1549,22 +1601,27 @@ impl SoftwarePipeline {
                 y2 *= self.play_res_y / layout_y;
             }
 
-            // Movement times are relative to event start
-            let event_start_cs = event.start_time_cs().unwrap_or(0);
-            let event_end_cs = event.end_time_cs().unwrap_or(u32::MAX);
-
-            // t1 and t2 are in milliseconds, need to convert to centiseconds
-            let t1_cs = t1 / 10;
-            let t2_cs = t2 / 10;
+            // Movement times are event-relative milliseconds on the native
+            // clock. (The old cs path divided the already-centisecond tag
+            // values by 10 a second time, shrinking every `\move` 10x.)
+            let event_start_ms = event.start_time_ms().unwrap_or(0);
+            let event_end_ms = event.end_time_ms().unwrap_or(u64::MAX);
 
             // If t1 and t2 are both 0, movement spans the entire event duration
-            let (move_start_cs, move_end_cs) = if t1 == 0 && t2 == 0 {
-                (event_start_cs, event_end_cs)
+            let (move_start_ms, move_end_ms) = if t1 == 0 && t2 == 0 {
+                (event_start_ms, event_end_ms)
             } else {
-                (event_start_cs + t1_cs, event_start_cs + t2_cs)
+                (
+                    event_start_ms + u64::from(t1),
+                    event_start_ms + u64::from(t2),
+                )
             };
 
-            let progress = calculate_move_progress(time_cs, move_start_cs, move_end_cs);
+            let progress = crate::pipeline::animation::calculate_progress_ms(
+                time_ms,
+                move_start_ms,
+                move_end_ms,
+            );
             let x = x1 + (x2 - x1) * progress;
             let y = y1 + (y2 - y1) * progress;
 
@@ -1885,6 +1942,15 @@ impl Pipeline for SoftwarePipeline {
         time_cs: u32,
         context: &RenderContext,
     ) -> Result<Vec<IntermediateLayer>, RenderError> {
+        self.process_events_ms(events, u64::from(time_cs) * 10, context)
+    }
+
+    fn process_events_ms(
+        &mut self,
+        events: &[&Event],
+        time_ms: u64,
+        context: &RenderContext,
+    ) -> Result<Vec<IntermediateLayer>, RenderError> {
         // Clear collision resolver for this frame (but keep dimensions)
         self.collision_resolver.clear();
 
@@ -1896,8 +1962,8 @@ impl Pipeline for SoftwarePipeline {
         sorted_events.sort_by(|a, b| {
             let layer_a = a.layer.parse::<i32>().unwrap_or(0);
             let layer_b = b.layer.parse::<i32>().unwrap_or(0);
-            let start_a = a.start_time_cs().unwrap_or(0);
-            let start_b = b.start_time_cs().unwrap_or(0);
+            let start_a = a.start_time_ms().unwrap_or(0);
+            let start_b = b.start_time_ms().unwrap_or(0);
 
             // Sort by layer first, then by start time
             layer_a.cmp(&layer_b).then(start_a.cmp(&start_b))
@@ -1910,7 +1976,7 @@ impl Pipeline for SoftwarePipeline {
         // collisions). Positioned events (\pos/\move) are exempt and do not
         // participate in stacking.
         for event in sorted_events {
-            let mut event_layers = self.process_event(event, time_cs, context)?;
+            let mut event_layers = self.process_event(event, time_ms, context)?;
 
             if !Self::event_is_positioned(event) {
                 if let Some(bbox) = self.event_bounding_box(&event_layers) {
@@ -1943,13 +2009,26 @@ impl Pipeline for SoftwarePipeline {
         time_cs: u32,
         prev_time_cs: u32,
     ) -> Result<Vec<DirtyRegion>, RenderError> {
+        self.compute_dirty_regions_ms(
+            events,
+            u64::from(time_cs) * 10,
+            u64::from(prev_time_cs) * 10,
+        )
+    }
+
+    fn compute_dirty_regions_ms(
+        &self,
+        events: &[&Event],
+        time_ms: u64,
+        prev_time_ms: u64,
+    ) -> Result<Vec<DirtyRegion>, RenderError> {
         let mut regions = Vec::new();
 
         for event in events {
-            let was_active = event.start_time_cs().unwrap_or(0) <= prev_time_cs
-                && event.end_time_cs().unwrap_or(u32::MAX) > prev_time_cs;
-            let is_active = event.start_time_cs().unwrap_or(0) <= time_cs
-                && event.end_time_cs().unwrap_or(u32::MAX) > time_cs;
+            let was_active = event.start_time_ms().unwrap_or(0) <= prev_time_ms
+                && event.end_time_ms().unwrap_or(u64::MAX) > prev_time_ms;
+            let is_active = event.start_time_ms().unwrap_or(0) <= time_ms
+                && event.end_time_ms().unwrap_or(u64::MAX) > time_ms;
 
             if was_active != is_active {
                 // Event visibility changed, mark entire screen as dirty for now

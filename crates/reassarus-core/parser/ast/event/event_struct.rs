@@ -127,6 +127,35 @@ impl Event<'_> {
         let end = self.end_time_cs()?;
         Ok(end.saturating_sub(start))
     }
+
+    /// Parse start time to milliseconds (native renderer clock).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the time format is invalid or cannot be parsed.
+    pub fn start_time_ms(&self) -> Result<u64, crate::utils::CoreError> {
+        crate::utils::parse_ass_time_ms(self.start)
+    }
+
+    /// Parse end time to milliseconds (native renderer clock).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the time format is invalid or cannot be parsed.
+    pub fn end_time_ms(&self) -> Result<u64, crate::utils::CoreError> {
+        crate::utils::parse_ass_time_ms(self.end)
+    }
+
+    /// Get duration in milliseconds. Returns 0 if start exceeds end.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either start or end time format is invalid.
+    pub fn duration_ms(&self) -> Result<u64, crate::utils::CoreError> {
+        let start = self.start_time_ms()?;
+        let end = self.end_time_ms()?;
+        Ok(end.saturating_sub(start))
+    }
 }
 
 impl Default for Event<'_> {

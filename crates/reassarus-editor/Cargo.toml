@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "High-performance, ergonomic editor layer for ASS subtitles"
-homepage = "https://github.com/wiedymi/reassarus"
+homepage = "https://github.com/mlm-games/reassarus"
 documentation = "https://docs.rs/reassarus-editor"
 readme = "README.md"
 categories = ["multimedia::video", "text-editors", "parser-implementations"]
@@ -19,7 +19,7 @@ path = "lib.rs"
 # Explicit (not workspace): needs default-features = false, which cargo
 # ignores on workspace-inherited deps.
 reassarus-core = { version = "0.1.1", path = "../reassarus-core", default-features = false }
-thiserror = { workspace = true, optional = true } # Only enabled with `std`
+thiserror = { workspace = true, optional = true }                                            # Only enabled with `std`
 
 # Rope data structure for text editing (feature-gated)
 ropey = { workspace = true, optional = true }
@@ -92,10 +92,10 @@ default = ["full"]
 # It enables alloc-only dependencies, making it compatible with `nostd`.
 minimal = [
     "reassarus-core/minimal", # Core minimal features from reassarus-core
-    "rope",         # Rope data structure for efficient text editing
-    "arena",        # Arena allocator for pooling histories and deltas
-    "stream",       # Essential for incremental parsing performance
-    "dep:hashbrown",    # HashMap support for no_std environments
+    "rope",                   # Rope data structure for efficient text editing
+    "arena",                  # Arena allocator for pooling histories and deltas
+    "stream",                 # Essential for incremental parsing performance
+    "dep:hashbrown",          # HashMap support for no_std environments
 ]
 
 # Provides all features for a rich, full-featured ASS subtitle editor.
@@ -104,15 +104,15 @@ minimal = [
 # It explicitly enables `std` and `thiserror` (which requires `std`).
 full = [
     "reassarus-core/full", # All reassarus-core features
-    "minimal",      # Start with the core minimal set (which is alloc-only)
-    "std",          # Standard library support
-    "analysis",     # Script analysis and linting
-    "plugins",      # Extension system (e.g., built-in syntax highlighting, auto-complete)
-    "formats",      # Import/export format support (SRT, WebVTT)
-    "search-index", # FST-based advanced search for large documents
-    "concurrency",  # Multi-threading and async support for UI responsiveness
-    "serde",        # Serialization for editor state (e.g., saving/loading)
-    "dep:thiserror",# `thiserror` requires `std`
+    "minimal",             # Start with the core minimal set (which is alloc-only)
+    "std",                 # Standard library support
+    "analysis",            # Script analysis and linting
+    "plugins",             # Extension system (e.g., built-in syntax highlighting, auto-complete)
+    "formats",             # Import/export format support (SRT, WebVTT)
+    "search-index",        # FST-based advanced search for large documents
+    "concurrency",         # Multi-threading and async support for UI responsiveness
+    "serde",               # Serialization for editor state (e.g., saving/loading)
+    "dep:thiserror",       # `thiserror` requires `std`
 ]
 
 # --- Granular Features (typically enabled by 'minimal' or 'full') ---
@@ -124,17 +124,24 @@ std = ["reassarus-core/std", "ropey/default", "bumpalo/std"]
 # Core parsing and analysis features from reassarus-core.
 analysis = ["reassarus-core/analysis"]
 plugins = ["reassarus-core/plugins"]
-stream = ["reassarus-core/stream"] # Essential for incremental parsing performance
+stream = [
+    "reassarus-core/stream",
+] # Essential for incremental parsing performance
 
 # Editor-specific dependencies.
-rope = ["dep:ropey"] # Rope data structure for efficient text editing
-arena = ["dep:bumpalo"] # Arena allocator for pooling histories and deltas
-formats = ["dep:regex", "std"] # `regex` and format conversion require `std`
-search-index = ["dep:fst", "std"] # `fst` requires `std`
+rope = ["dep:ropey"]                                 # Rope data structure for efficient text editing
+arena = ["dep:bumpalo"]                              # Arena allocator for pooling histories and deltas
+formats = ["dep:regex", "std"]                       # `regex` and format conversion require `std`
+search-index = ["dep:fst", "std"]                    # `fst` requires `std`
 serde = ["dep:serde", "reassarus-core/serde", "std"] # `serde` requires `std`
 
 # Concurrency and asynchronous operation support.
-concurrency = ["multi-thread", "async", "std", "dep:static_assertions"] # Concurrency features require `std`
+concurrency = [
+    "multi-thread",
+    "async",
+    "std",
+    "dep:static_assertions",
+] # Concurrency features require `std`
 multi-thread = ["dep:parking_lot", "std"]
 async = ["dep:futures", "dep:tokio", "std"]
 

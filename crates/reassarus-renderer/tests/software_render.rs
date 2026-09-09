@@ -714,3 +714,116 @@ fn static_frame_cache_consistency() {
         .to_vec();
     assert_ne!(c, d, "animated frames at different times must differ");
 }
+
+/// Bounding box (min_x, min_y, max_x, max_y) of pixels with any coverage.
+fn ink_bbox(data: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
+    let (mut min_x, mut min_y) = (usize::MAX, usize::MAX);
+    let (mut max_x, mut max_y) = (0usize, 0usize);
+    for (i, px) in data.chunks_exact(4).enumerate() {
+        if px[3] > 0 {
+            let (x, y) = (i % width, i / width);
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+    }
+    (min_x != usize::MAX).then_some((min_x, min_y, max_x, max_y))
+}
+
+#[test]
+fn shadow_extends_bbox_by_full_depth() {
+    // Opaque shadow under white glyphs: `\shad6` must grow the ink bbox by
+    // the full 6px down and right (libass 0.17.5 parity — the old `* 0.5`
+    // factor grew it by ~3px). PlayRes == frame size so the scale is 1.
+    // ±2px tolerance for anti-aliased fringe.
+    let (w, _, plain) = render("X");
+    let (_, _, shadowed) = render(r"{\shad6}X");
+    let (px0, py0, px1, py1) = ink_bbox(&plain, w).expect("plain must cover");
+    let (sx0, sy0, sx1, sy1) = ink_bbox(&shadowed, w).expect("shadowed must cover");
+    assert!(
+        sx0.abs_diff(px0) <= 1 && sy0.abs_diff(py0) <= 1,
+        "shadow extends down-right only: top-left {sx0},{sy0} vs {px0},{py0}"
+    );
+    let (dx, dy) = (sx1 as i32 - px1 as i32, sy1 as i32 - py1 as i32);
+    assert!(
+        (4..=8).contains(&dx) && (4..=8).contains(&dy),
+        "bbox must grow by ~6px down-right, grew ({dx},{dy})"
+    );
+}
+
+#[test]
+fn fully_transparent_primary_renders_nothing() {
+    // libass emits nothing for the event once the primary is (near-)fully
+    // transparent — including an opaque shadow (`\1a&HFD&` renders,
+    // `\1a&HFE&` does not on libass 0.17.5).
+    let (_, _, blank) = render(r"{\shad6\1a&HFF&}X");
+    assert_eq!(
+        count_covered(&blank),
+        0,
+        "zero-opacity primary must cull all"
+    );
+    let (_, _, almost) = render(r"{\shad6\1a&HFD&}X");
+    assert!(
+        count_covered(&almost) > 0,
+        "opacity 2/255 must still render"
+    );
+}
+
+/// Render a single dialogue line at `time_ms` and return (width, RGBA bytes).
+fn render_ms(time_ms: u64, dialogue_text: &str) -> (usize, Vec<u8>) {
+    let script_text =
+        format!("{HEAD}Dialogue: 0,0:00:00.00,0:00:10.00,Default,,0,0,0,,{dialogue_text}\n");
+    let script = Script::parse(&script_text).expect("parse");
+    let ctx = RenderContext::new(1280, 720);
+    let mut renderer = Renderer::new(BackendType::Software, ctx).expect("renderer");
+    let frame = renderer.render_frame_ms(&script, time_ms).expect("render");
+    assert_eq!(frame.timestamp(), time_ms, "frame carries the ms timestamp");
+    (frame.width() as usize, frame.data().to_vec())
+}
+
+/// Horizontal centre of opaque ink (alpha >= 128).
+fn ink_center_x(data: &[u8], width: usize) -> f64 {
+    let (mut n, mut sx) = (0u64, 0u64);
+    for (i, px) in data.chunks_exact(4).enumerate() {
+        if px[3] >= 128 {
+            n += 1;
+            sx += (i % width) as u64;
+        }
+    }
+    assert!(n > 0, "expected ink");
+    sx as f64 / n as f64
+}
+
+#[test]
+fn ms_entry_matches_cs_entry_at_aligned_times() {
+    // render_frame(200) and render_frame_ms(2000) must be bit-identical: the
+    // cs path is exactly the ms path quantized, not a separate renderer.
+    let (_, _, a) = render("X");
+    let (_, b) = render_ms(2000, "X");
+    assert_eq!(a, b, "cs and ms entries must agree at aligned times");
+}
+
+#[test]
+fn ms_entry_interpolates_move_smoothly() {
+    // \move(200,0,400,0,0,1000) stays fully on-screen: at 500ms the line must
+    // sit halfway, not at the destination (the old cs path double-converted
+    // ms->cs and finished 10x early) — and 505ms must differ from 500ms
+    // (sub-cs interpolation).
+    let line = r"{\move(200,0,400,0,0,1000)\an7}MMMM";
+    let (w, half) = render_ms(500, line);
+    let (_, plus) = render_ms(505, line);
+    let (_, start) = render_ms(0, line);
+    let (_, end) = render_ms(1000, line);
+    let (cx_start, cx_half, cx_end) = (
+        ink_center_x(&start, w),
+        ink_center_x(&half, w),
+        ink_center_x(&end, w),
+    );
+    let mid = (cx_start + cx_end) / 2.0;
+    assert!(
+        (cx_half - mid).abs() < 3.0,
+        "500ms must be halfway: start={cx_start} half={cx_half} end={cx_end}"
+    );
+    assert_ne!(half, plus, "505ms must differ from 500ms");
+}

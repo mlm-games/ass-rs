@@ -337,7 +337,7 @@ Contributions are welcome! Please see the main [CONTRIBUTING.md](../../CONTRIBUT
 
 ```bash
 # Clone the repository
-git clone https://github.com/wiedymi/reassarus.git
+git clone https://github.com/mlm-games/reassarus.git
 cd reassarus/crates/reassarus-editor
 
 # Run tests

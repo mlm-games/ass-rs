@@ -408,3 +408,161 @@ fn animated_move_stays_renderable() {
     );
     assert!(!text_nodes(&built.scene.nodes).is_empty());
 }
+
+#[test]
+fn shadow_carries_full_ass_depth() {
+    // No empirical 0.5 factor: libass 0.17.5 offsets the shadow by exactly
+    // (depth, depth) — measured +6px for Shadow=6. PlayRes == frame size, so
+    // the scale here is 1 and the IR must carry (6, 6).
+    let layers = layers_at(200, r"{\shad6}X");
+    let mut saw = false;
+    for layer in &layers {
+        if let IntermediateLayer::Text(data) = layer {
+            for effect in data.effects.iter() {
+                if let reassarus_renderer::pipeline::TextEffect::Shadow {
+                    x_offset, y_offset, ..
+                } = effect
+                {
+                    assert_eq!((*x_offset, *y_offset), (6.0, 6.0));
+                    saw = true;
+                }
+            }
+        }
+    }
+    assert!(saw, "shad6 must emit a Shadow effect");
+}
+
+#[test]
+fn transparent_primary_culls_event_layers() {
+    // libass emits nothing (glyph, outline AND shadow) once the primary is
+    // (near-)fully transparent: `\1a&HFD&` renders, `\1a&HFE&` does not.
+    assert!(
+        layers_at(200, r"{\shad6\1a&HFD&}X")
+            .iter()
+            .any(|l| matches!(l, IntermediateLayer::Text(_))),
+        "opacity 2/255 must still emit layers"
+    );
+    assert!(
+        !layers_at(200, r"{\shad6\1a&HFF&}X")
+            .iter()
+            .any(|l| matches!(l, IntermediateLayer::Text(_))),
+        "zero-opacity primary must cull the event's text layers"
+    );
+    assert!(
+        !layers_at(200, r"{\shad6\1a&HFE&}X")
+            .iter()
+            .any(|l| matches!(l, IntermediateLayer::Text(_))),
+        "opacity 1/255 must cull the event's text layers"
+    );
+}
+
+#[test]
+fn text_layers_carry_measured_bounds() {
+    // The pipeline must populate shaping-measured bounds from the same cached
+    // run it lays out with, and the Repose scene rect must use them instead
+    // of the old glyph-count estimate.
+    let layers = layers_at(200, r"{\fsp4}Hello");
+    let data = layers
+        .iter()
+        .find_map(|l| match l {
+            IntermediateLayer::Text(d) => Some(d),
+            _ => None,
+        })
+        .expect("text layer");
+    let m = data
+        .measured
+        .expect("pipeline must populate measured bounds");
+    assert!(
+        m.width > 0.0 && m.height > 0.0,
+        "bounds must be positive: {m:?}"
+    );
+    assert!(
+        m.baseline > 0.0 && m.baseline < m.height,
+        "baseline must sit inside the box: {m:?}"
+    );
+    let expected = m.spaced_width(data.spacing, data.text.chars().count());
+    assert_eq!(data.spacing, 4.0, "fsp4 must reach the layer");
+    assert!(
+        (expected - (m.width + 16.0)).abs() < 0.01,
+        "5 glyphs at fsp4 add 4*4px: {expected} vs {}",
+        m.width + 16.0
+    );
+    let built = layers_to_scene(&layers, 1280, 720);
+    let node = text_nodes(&built.scene.nodes)
+        .into_iter()
+        .next()
+        .expect("text node");
+    if let SceneNode::Text { rect, .. } = node {
+        assert!(
+            (rect.w - expected).abs() < 0.01,
+            "scene rect must use measured width: {} vs {expected}",
+            rect.w
+        );
+        assert!(
+            (rect.h - m.height).abs() < 0.01,
+            "scene rect must use measured height: {} vs {}",
+            rect.h,
+            m.height
+        );
+    } else {
+        panic!("expected a Text node");
+    }
+}
+
+/// Find the first `PushTransform` in a scene.
+fn first_push(nodes: &[SceneNode]) -> repose_core::Transform {
+    nodes
+        .iter()
+        .find_map(|n| match n {
+            SceneNode::PushTransform { transform } => Some(*transform),
+            _ => None,
+        })
+        .expect("PushTransform")
+}
+
+#[test]
+fn frx_emits_projective_transform() {
+    // `\frx30` takes the perspective path: libass x-rotation direction in
+    // the projective row (focal 312.5px), pivot at the run centre.
+    let layers = layers_at(200, r"{\frx30}H");
+    let built = layers_to_scene(&layers, 1280, 720);
+    let t = first_push(&built.scene.nodes);
+    assert!(t.has_perspective(), "frx must set a projective row");
+    // libass `z = -y·sin(frx)`: negative y-slope, magnitude sin30/312.5.
+    let expect_slope = -0.5f32 / 312.5;
+    assert!(
+        (t.perspective[0] - 0.0).abs() < 1e-6 && (t.perspective[1] - expect_slope).abs() < 1e-6,
+        "perspective row {:?}, want [0, {expect_slope}, _]",
+        t.perspective
+    );
+}
+
+#[test]
+fn frz_without_tilt_stays_affine() {
+    // No `\frx`/`\fry`: the validated affine path is untouched.
+    let layers = layers_at(200, r"{\frz30}H");
+    let built = layers_to_scene(&layers, 1280, 720);
+    let t = first_push(&built.scene.nodes);
+    assert!(
+        !t.has_perspective(),
+        "pure frz must not take the perspective path"
+    );
+    assert!((t.rotate + 30f32.to_radians()).abs() < 1e-4);
+}
+
+#[test]
+fn org_sets_projective_pivot() {
+    // The `\org` pivot is a fixed point of the projective map.
+    let layers = layers_at(200, r"{\frx30\org(200,150)}H");
+    let built = layers_to_scene(&layers, 1280, 720);
+    let t = first_push(&built.scene.nodes);
+    assert!(t.has_perspective());
+    let m = t.projective_matrix();
+    let w = m[6] * 200.0 + m[7] * 150.0 + m[8];
+    let x = (m[0] * 200.0 + m[1] * 150.0 + m[2]) / w;
+    let y = (m[3] * 200.0 + m[4] * 150.0 + m[5]) / w;
+    assert!(
+        (x - 200.0).abs() < 0.01 && (y - 150.0).abs() < 0.01,
+        "org must be a fixed point, mapped to ({x}, {y})"
+    );
+}

@@ -92,6 +92,80 @@ pub fn parse_ass_time(time_str: &str) -> Result<u32, CoreError> {
     Ok(hours * 360_000 + minutes * 6_000 + seconds * 100 + centiseconds)
 }
 
+/// Parse ASS time format (H:MM:SS.CC) to milliseconds.
+///
+/// Same grammar as [`parse_ass_time`], but keeps the third fractional digit
+/// instead of truncating to centiseconds, so `0:00:01.234` is 1234ms rather
+/// than 123cs. This is the renderer's native clock: libass takes
+/// milliseconds (`ass_render_frame(..., now_ms)`), and centisecond-quantized
+/// animation progress visibly steps on slow `\move`/`\t`/`\fad`.
+///
+/// # Errors
+///
+/// Returns an error if the time format is invalid or cannot be parsed.
+pub fn parse_ass_time_ms(time_str: &str) -> Result<u64, CoreError> {
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() != 3 {
+        return Err(CoreError::InvalidTime(format!(
+            "Invalid time format: {time_str}"
+        )));
+    }
+
+    let hours: u64 = parts[0]
+        .parse()
+        .map_err(|_| CoreError::InvalidTime(format!("Invalid hours: {}", parts[0])))?;
+
+    let minutes: u64 = parts[1]
+        .parse()
+        .map_err(|_| CoreError::InvalidTime(format!("Invalid minutes: {}", parts[1])))?;
+
+    let seconds_parts: Vec<&str> = parts[2].split('.').collect();
+    let seconds: u64 = seconds_parts[0]
+        .parse()
+        .map_err(|_| CoreError::InvalidTime(format!("Invalid seconds: {}", seconds_parts[0])))?;
+
+    let millis = if seconds_parts.len() > 1 {
+        let frac_str = seconds_parts[1];
+        if frac_str.is_empty() || !frac_str.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(CoreError::InvalidTime(format!(
+                "Invalid fraction: {frac_str}"
+            )));
+        }
+        // Scale by digit count like the centisecond parser, considering at
+        // most the first three digits (`.c` = tenths … `.mmm` = milliseconds).
+        let frac = &frac_str[..frac_str.len().min(3)];
+        let frac_val: u64 = frac
+            .parse()
+            .map_err(|_| CoreError::InvalidTime(format!("Invalid fraction: {frac_str}")))?;
+        let scale = match frac.len() {
+            1 => 10,
+            2 => 100,
+            _ => 1000,
+        };
+        frac_val * 1000 / scale
+    } else {
+        0
+    };
+
+    if minutes >= 60 {
+        return Err(CoreError::InvalidTime(format!(
+            "Minutes must be < 60: {minutes}"
+        )));
+    }
+    if seconds >= 60 {
+        return Err(CoreError::InvalidTime(format!(
+            "Seconds must be < 60: {seconds}"
+        )));
+    }
+    if millis >= 1000 {
+        return Err(CoreError::InvalidTime(format!(
+            "Milliseconds must be < 1000: {millis}"
+        )));
+    }
+
+    Ok(hours * 3_600_000 + minutes * 60_000 + seconds * 1000 + millis)
+}
+
 /// Format centiseconds back to ASS time format
 ///
 /// Converts internal centisecond representation back to H:MM:SS.CC format.

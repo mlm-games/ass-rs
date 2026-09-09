@@ -47,6 +47,24 @@ pub trait Pipeline: Send + Sync {
         context: &RenderContext,
     ) -> Result<Vec<IntermediateLayer>, RenderError>;
 
+    /// Process events at a millisecond timestamp (native renderer clock).
+    ///
+    /// Millisecond entry interpolates `\move`/`\t`/`\fad`/`\fade`/karaoke
+    /// smoothly; the centisecond entry quantizes to 10ms steps. The default
+    /// impl quantizes (`ms / 10`); override for native precision.
+    fn process_events_ms(
+        &mut self,
+        events: &[&Event],
+        time_ms: u64,
+        context: &RenderContext,
+    ) -> Result<Vec<IntermediateLayer>, RenderError> {
+        self.process_events(
+            events,
+            (time_ms / 10).min(u64::from(u32::MAX)) as u32,
+            context,
+        )
+    }
+
     /// Compute dirty regions for incremental rendering
     fn compute_dirty_regions(
         &self,
@@ -54,6 +72,20 @@ pub trait Pipeline: Send + Sync {
         time_cs: u32,
         prev_time_cs: u32,
     ) -> Result<Vec<DirtyRegion>, RenderError>;
+
+    /// Millisecond variant of [`compute_dirty_regions`](Pipeline::compute_dirty_regions).
+    fn compute_dirty_regions_ms(
+        &self,
+        events: &[&Event],
+        time_ms: u64,
+        prev_time_ms: u64,
+    ) -> Result<Vec<DirtyRegion>, RenderError> {
+        self.compute_dirty_regions(
+            events,
+            (time_ms / 10).min(u64::from(u32::MAX)) as u32,
+            (prev_time_ms / 10).min(u64::from(u32::MAX)) as u32,
+        )
+    }
 }
 
 /// Pipeline stage for processing
@@ -95,11 +127,20 @@ impl IntermediateLayer {
                 }
             }
             Self::Text(data) => {
+                let (w, h) = match &data.measured {
+                    Some(m) => (
+                        m.spaced_width(data.spacing, data.text.chars().count()),
+                        m.height,
+                    ),
+                    // Hand-built layer without shaping metrics: fall back to a
+                    // generous estimate so the region is never under-covered.
+                    None => (200.0, data.font_size * 1.5),
+                };
                 let approx_bounds = (
                     data.x as u32,
                     data.y as u32,
-                    (data.x + 200.0) as u32,
-                    (data.y + data.font_size * 1.5) as u32,
+                    (data.x + w) as u32,
+                    (data.y + h) as u32,
                 );
                 region.intersects(approx_bounds)
             }
@@ -161,6 +202,35 @@ pub struct TextData {
     pub effects: SmallVec<[TextEffect; 4]>,
     /// Letter spacing in pixels
     pub spacing: f32,
+    /// Shaping-measured bounds, populated by the pipeline from the same
+    /// cached run it lays out with. Backends must prefer this over
+    /// glyph-count estimates for clip/blur/layer rects and dirty regions;
+    /// `None` only for hand-built layers (tests, drawings path).
+    pub measured: Option<MeasuredBounds>,
+}
+
+/// Shaping-measured text bounds in the layer's local pixels.
+#[derive(Clone, Copy, Debug)]
+pub struct MeasuredBounds {
+    /// Total shaped advance (excludes [`TextData::spacing`], which backends
+    /// add per glyph: rendered width is `width + spacing * (glyphs - 1)`).
+    pub width: f32,
+    /// Ascent+descent box (Windows metrics, libass-compatible).
+    pub height: f32,
+    /// Baseline offset from the layer top.
+    pub baseline: f32,
+    /// Ascent in pixels.
+    pub ascent: f32,
+    /// Descent in pixels (negative).
+    pub descent: f32,
+}
+
+impl MeasuredBounds {
+    /// Rendered width including inter-glyph spacing (`glyphs` = glyph count).
+    #[must_use]
+    pub fn spaced_width(&self, spacing: f32, glyphs: usize) -> f32 {
+        self.width + spacing * glyphs.saturating_sub(1) as f32
+    }
 }
 
 /// Text effect enumeration
@@ -219,6 +289,12 @@ pub enum TextEffect {
         y1: f32,
         x2: f32,
         y2: f32,
+        inverse: bool,
+    },
+    /// Vector (drawing) clip region (`\clip(m ...)`), in render coordinates.
+    /// Backends tessellate/mask it directly; `inverse` is `\iclip`.
+    VectorClip {
+        path: tiny_skia::Path,
         inverse: bool,
     },
     /// Opaque box behind the text (`BorderStyle: 3`), drawn in the outline

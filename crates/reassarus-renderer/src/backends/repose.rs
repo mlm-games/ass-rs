@@ -30,10 +30,11 @@
 //!   normalized to multipliers there — Y is already baked into the font
 //!   size during shaping, so only X is applied. `Shear` (`\fax`/`\fay`)
 //!   maps directly onto the transform's shear factors. `Rotation.x/y`
-//!   (perspective) folds into shear with the same sin-based skew
-//!   approximation the software reference uses, so no effect class is
-//!   silently dropped. `\org` maps to a normalized pivot without clamping,
-//!   so distant rotation levers keep their true position.
+//!   (`\frx`/`\fry`) take the perspective path instead: libass's exact 3D
+//!   rotation (order, signs, shear coupling) about the `\org` pivot
+//!   (default: run centre) with its perspective row, so the subtree
+//!   flattens and composites projectively (differentially fit against
+//!   libass 0.17.5, ≤2px).
 //! - `Clip` → `PushClip`/`PopClip` (`Intersect`/`Difference` for
 //!   `\clip`/`\iclip`).
 //! - `Vector` → tessellated `VectorMesh`es: always a fill pass, plus a
@@ -272,13 +273,77 @@ impl LayerCtx {
     }
 }
 
-/// Rough text bounds: the pipeline emits pen positions, not laid-out boxes,
-/// so estimate width from glyph count for clip/blur/layer rects.
-fn estimate_rect(x: f32, y: f32, text: &str, font_size: f32, spacing: f32) -> Rect {
-    let glyphs = text.chars().count().max(1) as f32;
-    let w = (glyphs * font_size * 0.6 + spacing * glyphs).max(1.0);
-    let h = (font_size * 1.4).max(1.0);
-    Rect { x, y, w, h }
+/// Text bounds from the pipeline's shaping-measured metrics, falling back to
+/// the old glyph-count estimate for hand-built layers (tests) only.
+fn text_rect(data: &TextData) -> Rect {
+    let (w, h) = match &data.measured {
+        Some(m) => (
+            m.spaced_width(data.spacing, data.text.chars().count()),
+            m.height,
+        ),
+        None => {
+            let glyphs = data.text.chars().count().max(1) as f32;
+            (
+                (glyphs * data.font_size * 0.6 + data.spacing * glyphs).max(1.0),
+                (data.font_size * 1.4).max(1.0),
+            )
+        }
+    };
+    Rect {
+        x: data.x,
+        y: data.y,
+        w: w.max(1.0),
+        h: h.max(1.0),
+    }
+}
+
+/// Expand a layer rect to cover `rect` under `transform` (plus `pad` px on
+/// every side for outline/blur bleed), so rotated/projected layer content
+/// never clips at the flat text rect. Uses the same origin-free affine +
+/// perspective-divide semantics the renderer applies; non-finite projections
+/// fall back to the padded flat rect.
+fn expand_layer_rect(rect: Rect, transform: Option<Transform>, pad: f32) -> Rect {
+    let padded = Rect {
+        x: rect.x - pad,
+        y: rect.y - pad,
+        w: rect.w + pad * 2.0,
+        h: rect.h + pad * 2.0,
+    };
+    let Some(t) = transform else {
+        return padded;
+    };
+    let corners = [
+        (rect.x, rect.y),
+        (rect.x + rect.w, rect.y),
+        (rect.x + rect.w, rect.y + rect.h),
+        (rect.x, rect.y + rect.h),
+    ];
+    let mut min_x = f32::MAX;
+    let mut min_y = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut max_y = f32::MIN;
+    for (x, y) in corners {
+        let m = t.projective_matrix();
+        let w = m[6] * x + m[7] * y + m[8];
+        if !w.is_finite() || w.abs() < 1e-6 {
+            return padded;
+        }
+        let px = (m[0] * x + m[1] * y + m[2]) / w;
+        let py = (m[3] * x + m[4] * y + m[5]) / w;
+        if !px.is_finite() || !py.is_finite() {
+            return padded;
+        }
+        min_x = min_x.min(px);
+        min_y = min_y.min(py);
+        max_x = max_x.max(px);
+        max_y = max_y.max(py);
+    }
+    Rect {
+        x: min_x - pad,
+        y: min_y - pad,
+        w: (max_x - min_x).max(1.0) + pad * 2.0,
+        h: (max_y - min_y).max(1.0) + pad * 2.0,
+    }
 }
 
 /// Bundled parameters for one `SceneNode::Text` emission.
@@ -323,8 +388,8 @@ fn intern_font_family(name: &str) -> Option<&'static str> {
 /// Outline colour plus width in pixels.
 type OutlineSpec = ([u8; 4], f32);
 
-/// `\frz` degrees plus `\org` rotation centre in screen pixels.
-type RotationSpec = (f32, Option<(f32, f32)>);
+/// `\frx`/`\fry`/`\frz` degrees plus `\org` rotation centre in screen pixels.
+type RotationSpec = (f32, f32, f32, Option<(f32, f32)>);
 
 fn text_node(pass: &TextPass<'_>, draw_style: DrawStyle) -> SceneNode {
     SceneNode::Text {
@@ -360,6 +425,7 @@ fn emit_outline_pass(
     pass: &TextPass<'_>,
     outline: Option<OutlineSpec>,
     edge_blur: Option<f32>,
+    rot: Option<Transform>,
 ) {
     let Some((outline_color, outline_width)) = outline else {
         return;
@@ -382,19 +448,99 @@ fn emit_outline_pass(
     match edge_blur.filter(|r| *r > 0.0) {
         Some(radius) => {
             let id = layers_ctx.alloc();
+            // Cover the transformed stroke plus blur bleed (see
+            // `expand_layer_rect`); the shift keeps children layer-local.
+            let layer_rect = expand_layer_rect(pass.rect, rot, radius + outline_width);
             nodes.push(SceneNode::BeginLayer {
-                rect: pass.rect,
+                rect: layer_rect,
                 layer_id: id,
                 alpha: 1.0,
                 blur_radius_x: Px(radius),
                 blur_radius_y: Px(radius),
                 rectangle_edge: true,
             });
+            nodes.push(SceneNode::PushTransform {
+                transform: Transform::translate(-layer_rect.x, -layer_rect.y),
+            });
             nodes.push(stroke);
+            nodes.push(SceneNode::PopTransform);
             nodes.push(SceneNode::EndLayer { layer_id: id });
         }
         None => nodes.push(stroke),
     }
+}
+
+/// libass perspective focal length in screen pixels.
+///
+/// libass rotates with `dist = 20000 * blur_scale` in outline units; those
+/// are 26.6 fixed-point (64 units/px, size-independent), so the effective
+/// focal is `20000 / 64 = 312.5`px. Validated differentially against libass
+/// 0.17.5 (single glyphs at \frx±30/\frx60/\fry±20, `\frx45` ± `\org`,
+/// 36–90px, 640x360 and 1280x720): this value minimizes squared edge error
+/// (max residual ~1px, vs ~80px for the old shear hack). The fit is
+/// size- and resolution-independent, matching the outline-units origin.
+const LIBASS_FOCAL_PX: f32 = 312.5;
+
+/// Build the libass 3D rotation as explicit homogeneous rows (pivot-relative).
+///
+/// Ports `calc_transform_matrix` (libass `ass_render.c`): shear rows, then
+/// `\frz`, then `\frx`, then `\fry`, with libass's exact signs
+/// (`sx=-sin(frx)`, `sy=+sin(fry)`, `sz=-sin(frz)`). ASS `\fscx` is folded
+/// on the right (applied first, matching the affine path's scale order);
+/// `\fax`/`\fay` ride the pre-rotation shear rows exactly like libass.
+/// Rotation is about `(px, py)` (the `\org` pivot, or the run centre);
+/// rows are constructed pivot-preserving (`M(pivot) = pivot`, `W = 1`).
+/// Returns `(row_x, row_y, persp_row)` for
+/// [`from_projective_rows`](repose_core::Transform::from_projective_rows).
+fn libass_rotation_rows(
+    frx_deg: f32,
+    fry_deg: f32,
+    frz_deg: f32,
+    fax: f32,
+    fay: f32,
+    fscx: f32,
+    px: f32,
+    py: f32,
+) -> ([f32; 3], [f32; 3], [f32; 3]) {
+    let (frx, fry, frz) = (
+        frx_deg * PI / 180.0,
+        fry_deg * PI / 180.0,
+        frz_deg * PI / 180.0,
+    );
+    let (sx, cx) = (-frx.sin(), frx.cos());
+    let (sy, cy) = (fry.sin(), fry.cos());
+    let (sz, cz) = (-frz.sin(), frz.cos());
+    // Shear rows (libass `x1`/`y1`, translation parts zero: pivot-relative).
+    let x1 = (1.0f32, fax);
+    let y1 = (fay, 1.0f32);
+    // `\frz`.
+    let x2 = (x1.0 * cz - y1.0 * sz, x1.1 * cz - y1.1 * sz);
+    let y2 = (x1.0 * sz + y1.0 * cz, x1.1 * sz + y1.1 * cz);
+    // `\frx`.
+    let y3 = (y2.0 * cx, y2.1 * cx);
+    let z3 = (y2.0 * sx, y2.1 * sx);
+    // `\fry`.
+    let x4 = (x2.0 * cy - z3.0 * sy, x2.1 * cy - z3.1 * sy);
+    let z4 = (x2.0 * sy + z3.0 * cy, x2.1 * sy + z3.1 * cy);
+    // ASS `\fscx` applies first (rightmost), like the affine path.
+    let x4 = (x4.0 * fscx, x4.1 * fscx);
+    // libass `offs` coupling: its rows are `row·dist + z·offs`, i.e. the
+    // affine part carries `pivot·z / dist`. Without it the map under-shoots
+    // libass by ~14px on rotated runs (the fitted form demands it; residual
+    // ≤1px globally with it). `offs` is per-glyph in libass; the run pivot
+    // is the run-level equivalent (exact for single-run lines). NOTE units:
+    // the coupling uses the *scaled* z direction (over the focal), matching
+    // the `W` row — raw z here blows the affine part up ~300x.
+    let zx = z4.0 / LIBASS_FOCAL_PX;
+    let zy = z4.1 / LIBASS_FOCAL_PX;
+    let xc = (x4.0 + px * zx, x4.1 + px * zy);
+    let yc = (y3.0 + py * zx, y3.1 + py * zy);
+    let row_pivot = |p: f32, a: f32, b: f32| [a, b, p - a * px - b * py];
+    (
+        row_pivot(px, xc.0, xc.1),
+        row_pivot(py, yc.0, yc.1),
+        [zx, zy, 1.0 - (zx * px + zy * py)],
+    )
 }
 
 /// Emit one fill pass of `pass`, honouring the outline effect as a
@@ -405,8 +551,9 @@ fn emit_fill_pass(
     pass: &TextPass<'_>,
     outline: Option<OutlineSpec>,
     edge_blur: Option<f32>,
+    rot: Option<Transform>,
 ) {
-    emit_outline_pass(nodes, layers_ctx, pass, outline, edge_blur);
+    emit_outline_pass(nodes, layers_ctx, pass, outline, edge_blur, rot);
     nodes.push(text_node(pass, DrawStyle::Fill));
 }
 
@@ -428,10 +575,14 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
     let mut karaoke: Option<(f32, u8, [u8; 4])> = None;
     let mut rotation: Option<RotationSpec> = None;
     let mut scale: Option<(f32, f32)> = None;
-    // Accumulated (shear_x, shear_y): `\fax`/`\fay` plus the software
-    // reference's sin-based `\frx`/`\fry` skew approximation.
+    // Accumulated `\fax`/`\fay` shear. (`\frx`/`\fry` used to fold in here
+    // as a sin-based skew; they now take the perspective path above, with
+    // shear folded into the rotation rows libass-style instead.)
     let mut shear: Option<(f32, f32)> = None;
     let mut clip: Option<(f32, f32, f32, f32, bool)> = None;
+    // Tessellated drawing clip (`\clip(m ...)`), emitted as a stencil
+    // `PushVectorClip` around the run.
+    let mut vclip: Option<(tiny_skia::Path, bool)> = None;
     let mut opaque: Option<([u8; 4], f32)> = None;
 
     for effect in data.effects.iter() {
@@ -464,18 +615,7 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                 secondary,
             } => karaoke = Some((progress.clamp(0.0, 1.0), *style, *secondary)),
             TextEffect::Rotation { x, y, z, origin } => {
-                // No true perspective in the scene graph: fold `\frx`/`\fry`
-                // into shear with the software reference's approximation
-                // (skew = sin(angle) * 0.5 around the text centre).
-                if *x != 0.0 {
-                    let s = shear.get_or_insert((0.0, 0.0));
-                    s.1 += (*x * PI / 180.0).sin() * 0.5;
-                }
-                if *y != 0.0 {
-                    let s = shear.get_or_insert((0.0, 0.0));
-                    s.0 += (*y * PI / 180.0).sin() * 0.5;
-                }
-                rotation = Some((*z, *origin));
+                rotation = Some((*x, *y, *z, *origin));
             }
             TextEffect::Shear { x, y } => {
                 let s = shear.get_or_insert((0.0, 0.0));
@@ -493,11 +633,14 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                 y2,
                 inverse,
             } => clip = Some((*x1, *y1, *x2, *y2, *inverse)),
+            TextEffect::VectorClip { path, inverse } => {
+                vclip = Some((path.clone(), *inverse));
+            }
             TextEffect::OpaqueBox { color, padding } => opaque = Some((*color, *padding)),
         }
     }
 
-    let rect = estimate_rect(data.x, data.y, &data.text, data.font_size, data.spacing);
+    let rect = text_rect(data);
     let base = TextPass {
         text: &data.text,
         rect,
@@ -528,10 +671,45 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
         });
     }
 
+    // Drawing clip (`\clip(m ...)`): tessellate to a stencil mask. A failed
+    // tessellation drops the clip (fail-open) rather than the run — a missing
+    // clip is closer to libass than missing text.
+    if let Some((path, inverse)) = &vclip {
+        if let Some(mesh) = tessellate_fill_mesh(path, [1.0, 1.0, 1.0, 1.0]) {
+            nodes.push(SceneNode::PushVectorClip {
+                mesh,
+                op: if *inverse {
+                    ClipOp::Difference
+                } else {
+                    ClipOp::Intersect
+                },
+            });
+        } else {
+            vclip = None;
+        }
+    }
+
+    let has_perspective = rotation.map_or(false, |(x, y, _, _)| x != 0.0 || y != 0.0);
     let has_transform = rotation.is_some() || scale.is_some() || shear.is_some();
-    if has_transform {
+    // The pushed transform (if any), kept to expand blur-layer rects below:
+    // rotated/projected content must not clip at the flat text rect.
+    let pushed_transform: Option<Transform> = if has_perspective {
+        // True perspective via the scene graph's projective row: libass's
+        // exact 3D rotation (order, signs, shear coupling) about the `\org`
+        // pivot (default: run centre), with the differentially-fit focal.
+        // The subtree flattens into a layer and composites projectively.
+        // Shear and `\fscx` are folded into the rows (libass order), so no
+        // separate affine transform is emitted.
+        let (x_deg, y_deg, z_deg, origin) = rotation.unwrap_or((0.0, 0.0, 0.0, None));
+        let (fax, fay) = shear.unwrap_or((0.0, 0.0));
+        let fscx = scale.map_or(100.0, |(x, _)| x * 100.0);
+        let (px, py) = origin.unwrap_or((rect.x + rect.w * 0.5, rect.y + rect.h * 0.5));
+        let (rx, ry, rp) =
+            libass_rotation_rows(x_deg, y_deg, z_deg, fax, fay, fscx / 100.0, px, py);
+        Some(Transform::from_projective_rows(rx, ry, rp))
+    } else if has_transform {
         let (sx, sy) = scale.unwrap_or((1.0, 1.0));
-        let (z_deg, origin) = rotation.unwrap_or((0.0, None));
+        let (_, _, z_deg, origin) = rotation.unwrap_or((0.0, 0.0, 0.0, None));
         // ASS rotates counter-clockwise in degrees; repose takes radians.
         let rotate = -z_deg.to_radians();
         let (shear_x, shear_y) = shear.unwrap_or((0.0, 0.0));
@@ -544,33 +722,45 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                 (oy - rect.y) / rect.h.max(1.0),
             )
         });
-        nodes.push(SceneNode::PushTransform {
-            transform: Transform {
-                translate_x: 0.0,
-                translate_y: 0.0,
-                scale_x: sx,
-                scale_y: sy,
-                rotate,
-                shear_x,
-                shear_y,
-                origin_x,
-                origin_y,
-            },
-        });
+        Some(Transform {
+            translate_x: 0.0,
+            translate_y: 0.0,
+            scale_x: sx,
+            scale_y: sy,
+            rotate,
+            shear_x,
+            shear_y,
+            origin_x,
+            origin_y,
+            perspective: [0.0, 0.0, 1.0],
+        })
+    } else {
+        None
+    };
+    if let Some(transform) = pushed_transform {
+        nodes.push(SceneNode::PushTransform { transform });
     }
 
     // Full `\blur` wraps the whole run (fill, outline, shadow) in an
     // offscreen layer, like the reference's blur temp. `\be` is handled
     // per-outline inside `emit_fill_pass` and never reaches this layer.
+    // Layers expect layer-local children (the Repose producer contract —
+    // repose-ui pushes the same shift), so a `-rect` shift wraps the
+    // content; rotation/clip nodes inside compose on top of it. The layer
+    // rect covers the transformed run plus blur bleed.
     let layer_id = blur.filter(|r| *r > 0.0).map(|radius| {
         let id = layers_ctx.alloc();
+        let layer_rect = expand_layer_rect(rect, pushed_transform, radius);
         nodes.push(SceneNode::BeginLayer {
-            rect,
+            rect: layer_rect,
             layer_id: id,
             alpha: 1.0,
             blur_radius_x: Px(radius),
             blur_radius_y: Px(radius),
             rectangle_edge: true,
+        });
+        nodes.push(SceneNode::PushTransform {
+            transform: Transform::translate(-layer_rect.x, -layer_rect.y),
         });
         id
     });
@@ -600,7 +790,14 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
             decoration: TextDecoration::default(),
             ..base
         };
-        emit_fill_pass(nodes, layers_ctx, &shadow_pass, outline, edge_blur);
+        emit_fill_pass(
+            nodes,
+            layers_ctx,
+            &shadow_pass,
+            outline,
+            edge_blur,
+            pushed_transform,
+        );
     }
 
     if let Some((progress, style, secondary)) = karaoke {
@@ -616,7 +813,14 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                     ..base
                 }
             };
-            emit_fill_pass(nodes, layers_ctx, &sung, outline, edge_blur);
+            emit_fill_pass(
+                nodes,
+                layers_ctx,
+                &sung,
+                outline,
+                edge_blur,
+                pushed_transform,
+            );
         } else {
             // Swept styles (`\K`, `\kf`, `\ko`): unsung base in the
             // secondary colour, then a clipped window of the sung colour
@@ -625,7 +829,14 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                 color: secondary,
                 ..base
             };
-            emit_fill_pass(nodes, layers_ctx, &unsung, outline, edge_blur);
+            emit_fill_pass(
+                nodes,
+                layers_ctx,
+                &unsung,
+                outline,
+                edge_blur,
+                pushed_transform,
+            );
             if progress > 0.0 {
                 nodes.push(SceneNode::PushClip {
                     rect: Rect {
@@ -637,19 +848,37 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                     radius: [Px::ZERO; 4],
                     op: ClipOp::Intersect,
                 });
-                emit_fill_pass(nodes, layers_ctx, &base, outline, edge_blur);
+                emit_fill_pass(
+                    nodes,
+                    layers_ctx,
+                    &base,
+                    outline,
+                    edge_blur,
+                    pushed_transform,
+                );
                 nodes.push(SceneNode::PopClip);
             }
         }
     } else {
-        emit_fill_pass(nodes, layers_ctx, &base, outline, edge_blur);
+        emit_fill_pass(
+            nodes,
+            layers_ctx,
+            &base,
+            outline,
+            edge_blur,
+            pushed_transform,
+        );
     }
 
     if let Some(id) = layer_id {
+        nodes.push(SceneNode::PopTransform);
         nodes.push(SceneNode::EndLayer { layer_id: id });
     }
-    if has_transform {
+    if pushed_transform.is_some() {
         nodes.push(SceneNode::PopTransform);
+    }
+    if vclip.is_some() {
+        nodes.push(SceneNode::PopVectorClip);
     }
     if clip.is_some() {
         nodes.push(SceneNode::PopClip);
@@ -663,18 +892,123 @@ fn premult_linear(color: [u8; 4]) -> [f32; 4] {
 }
 
 /// Tessellate a `tiny-skia` path into a solid `VectorMesh`.
+fn tessellate_fill_mesh(path: &tiny_skia::Path, color: [f32; 4]) -> Option<Arc<VectorMeshData>> {
+    use lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex};
+
+    let lyon_path = lyon_from_skia(path);
+
+    let mut buffers: lyon_tessellation::VertexBuffers<[f32; 2], u32> =
+        lyon_tessellation::VertexBuffers::new();
+    FillTessellator::new()
+        .tessellate(
+            &lyon_path,
+            &FillOptions::tolerance(0.5),
+            &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array()),
+        )
+        .ok()?;
+    if buffers.indices.is_empty() {
+        return None;
+    }
+    let vertices: Arc<[VectorVertex]> = buffers
+        .vertices
+        .iter()
+        .map(|pos| VectorVertex {
+            pos: *pos,
+            color,
+            uv: [0.0, 0.0],
+        })
+        .collect();
+    Some(Arc::new(VectorMeshData {
+        vertices,
+        indices: buffers.indices.into(),
+    }))
+}
+
+/// Tessellate a `tiny-skia` path into `VectorMesh` nodes (fill + optional
+/// stroke) for a vector drawing layer.
 ///
 /// Returns `false` when there is no path or tessellation fails.
 fn emit_vector(out: &mut BuiltScene, data: &VectorData) -> bool {
     use lyon_path::math::Point;
-    use lyon_tessellation::{
-        BuffersBuilder, FillOptions, FillTessellator, FillVertex, StrokeOptions, StrokeTessellator,
-    };
+    use lyon_tessellation::{BuffersBuilder, StrokeOptions, StrokeTessellator};
 
     let Some(path) = &data.path else {
         return false;
     };
+    // libass drawings are filled AND stroked (when a border is set), so emit
+    // one mesh per pass instead of choosing stroke *instead of* fill. Each
+    // pass carries its own colour: `data.color` for the fill, `stroke.color`
+    // for the stroke (previously ignored).
+    let mut emitted = 0;
+    if let Some(mesh) = tessellate_fill_mesh(path, premult_linear(data.color)) {
+        out.scene.nodes.push(vector_mesh_node(mesh));
+        emitted += 1;
+    } else {
+        return false;
+    }
+    if data.stroke.is_some() {
+        let lyon_path = lyon_from_skia(path);
+        let width = data.stroke.as_ref().map_or(0.5, |s| s.width.max(0.5));
+        let options = StrokeOptions::tolerance(0.5).with_line_width(width);
+        let mut buffers: lyon_tessellation::VertexBuffers<[f32; 2], u32> =
+            lyon_tessellation::VertexBuffers::new();
+        let ok = StrokeTessellator::new()
+            .tessellate(
+                &lyon_path,
+                &options,
+                &mut BuffersBuilder::new(&mut buffers, |v: lyon_tessellation::StrokeVertex| {
+                    v.position().to_array()
+                }),
+            )
+            .is_ok();
+        if !ok || buffers.indices.is_empty() {
+            return false;
+        }
+        let color = premult_linear(data.stroke.as_ref().map_or([0, 0, 0, 0], |s| s.color));
+        let vertices: Arc<[VectorVertex]> = buffers
+            .vertices
+            .iter()
+            .map(|pos| VectorVertex {
+                pos: *pos,
+                color,
+                uv: [0.0, 0.0],
+            })
+            .collect();
+        out.scene
+            .nodes
+            .push(vector_mesh_node(Arc::new(VectorMeshData {
+                vertices,
+                indices: buffers.indices.into(),
+            })));
+        emitted += 1;
+    }
+    emitted > 0
+}
+
+/// Wrap a tessellated mesh in a world-space `VectorMesh` scene node.
+fn vector_mesh_node(mesh: Arc<VectorMeshData>) -> SceneNode {
+    SceneNode::VectorMesh {
+        mesh,
+        // Repose 2x3 convention is `[m00, m01, m10, m11, tx, ty]`
+        // (identity `[1, 0, 0, 1, 0, 0]`): the tessellated vertices are
+        // already in world pixels, so no local transform applies.
+        transform: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        paint: PaintDesc::Solid,
+        clip: None,
+        blend: BlendMode::Alpha,
+    }
+}
+
+/// Convert a `tiny-skia` path's contours into a lyon path.
+fn lyon_from_skia(path: &tiny_skia::Path) -> lyon_path::Path {
     let mut builder = lyon_path::Path::builder();
+    build_lyon_path(&mut builder, path);
+    builder.build()
+}
+
+/// Feed a `tiny-skia` path's contours into a lyon path builder.
+fn build_lyon_path(builder: &mut lyon_path::path::Builder, path: &tiny_skia::Path) {
+    use lyon_path::math::Point;
     let mut open = false;
     for seg in path.segments() {
         match seg {
@@ -722,66 +1056,6 @@ fn emit_vector(out: &mut BuiltScene, data: &VectorData) -> bool {
     if open {
         builder.end(false);
     }
-    let lyon_path = builder.build();
-
-    // libass drawings are filled AND stroked (when a border is set), so emit
-    // one mesh per pass instead of choosing stroke *instead of* fill. Each
-    // pass carries its own colour: `data.color` for the fill, `stroke.color`
-    // for the stroke (previously ignored).
-    let mut passes: Vec<([f32; 4], bool)> = vec![(premult_linear(data.color), false)];
-    if let Some(stroke) = &data.stroke {
-        passes.push((premult_linear(stroke.color), true));
-    }
-    let mut emitted = 0;
-    for (color, is_stroke) in passes {
-        let mut buffers: lyon_tessellation::VertexBuffers<[f32; 2], u32> =
-            lyon_tessellation::VertexBuffers::new();
-        let ok = if is_stroke {
-            let width = data.stroke.as_ref().map_or(0.5, |s| s.width.max(0.5));
-            let options = StrokeOptions::tolerance(0.5).with_line_width(width);
-            StrokeTessellator::new()
-                .tessellate(
-                    &lyon_path,
-                    &options,
-                    &mut BuffersBuilder::new(&mut buffers, |v: lyon_tessellation::StrokeVertex| {
-                        v.position().to_array()
-                    }),
-                )
-                .is_ok()
-        } else {
-            FillTessellator::new()
-                .tessellate(
-                    &lyon_path,
-                    &FillOptions::tolerance(0.5),
-                    &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array()),
-                )
-                .is_ok()
-        };
-        if !ok || buffers.indices.is_empty() {
-            return false;
-        }
-        let vertices: Arc<[VectorVertex]> = buffers
-            .vertices
-            .iter()
-            .map(|pos| VectorVertex {
-                pos: *pos,
-                color,
-                uv: [0.0, 0.0],
-            })
-            .collect();
-        out.scene.nodes.push(SceneNode::VectorMesh {
-            mesh: Arc::new(VectorMeshData {
-                vertices,
-                indices: buffers.indices.into(),
-            }),
-            transform: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-            paint: PaintDesc::Solid,
-            clip: None,
-            blend: BlendMode::Alpha,
-        });
-        emitted += 1;
-    }
-    emitted > 0
 }
 
 /// How much of the frame the reference software backend covered.

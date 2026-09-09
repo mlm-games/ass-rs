@@ -17,8 +17,8 @@ pub struct EventSelector {
     #[cfg(feature = "nostd")]
     previous_active: BTreeSet<usize>,
 
-    /// Last rendered timestamp
-    last_timestamp: Option<u32>,
+    /// Last rendered timestamp, in milliseconds on the native clock.
+    last_timestamp: Option<u64>,
 
     /// Dirty regions that need re-rendering
     dirty_regions: Vec<DirtyRegion>,
@@ -36,12 +36,12 @@ pub struct EventSelector {
 ///
 /// Keyed by the events `Vec`'s address, length, and the comment-rendering flag,
 /// so it is reused across frames and rebuilt only when the script (or that flag)
-/// changes. Each entry is `(start_cs, end_cs, original_index)`; the original
+/// changes. Each entry is `(start_ms, end_ms, original_index)`; the original
 /// index preserves file-order rendering when active events are emitted.
 #[derive(Debug, Clone)]
 struct TimeIndex {
     key: (usize, usize, bool),
-    by_start: Vec<(u32, u32, usize)>,
+    by_start: Vec<(u64, u64, usize)>,
 }
 
 /// A region that needs re-rendering
@@ -96,6 +96,18 @@ impl EventSelector {
         script: &'a Script<'a>,
         time_cs: u32,
     ) -> Result<ActiveEvents<'a>, RenderError> {
+        self.select_active_ms(script, u64::from(time_cs) * 10)
+    }
+
+    /// Millisecond variant of [`select_active`](EventSelector::select_active).
+    ///
+    /// Event boundaries are exact at any resolution; sub-centisecond times
+    /// additionally keep animated-event dirty tracking precise.
+    pub fn select_active_ms<'a>(
+        &mut self,
+        script: &'a Script<'a>,
+        time_ms: u64,
+    ) -> Result<ActiveEvents<'a>, RenderError> {
         let mut active_events = Vec::new();
         #[cfg(not(feature = "nostd"))]
         let mut current_active = HashSet::new();
@@ -120,10 +132,10 @@ impl EventSelector {
                 .expect("time index built by ensure_index");
             let hi = index
                 .by_start
-                .partition_point(|&(start, _, _)| start <= time_cs);
+                .partition_point(|&(start, _, _)| start <= time_ms);
             let mut active_idx: Vec<usize> = index.by_start[..hi]
                 .iter()
-                .filter(|&&(_, end, _)| end >= time_cs)
+                .filter(|&&(_, end, _)| end >= time_ms)
                 .map(|&(_, _, idx)| idx)
                 .collect();
             active_idx.sort_unstable();
@@ -150,14 +162,14 @@ impl EventSelector {
         // Check if re-render is needed
         let is_dirty = !newly_active.is_empty()
             || !newly_inactive.is_empty()
-            || self.has_animated_events(&active_events, time_cs)
+            || self.has_animated_events(&active_events, time_ms)
             || self
                 .last_timestamp
-                .is_none_or(|last| (time_cs as i32 - last as i32).abs() > 100);
+                .is_none_or(|last| (time_ms as i64 - last as i64).abs() > 1000);
 
         // Update state
         self.previous_active = current_active;
-        self.last_timestamp = Some(time_cs);
+        self.last_timestamp = Some(time_ms);
 
         Ok(ActiveEvents {
             events: active_events,
@@ -191,8 +203,8 @@ impl EventSelector {
                 _ => false,
             };
             if should_include {
-                let start = event.start_time_cs().unwrap_or(0);
-                let end = event.end_time_cs().unwrap_or(0);
+                let start = event.start_time_ms().unwrap_or(0);
+                let end = event.end_time_ms().unwrap_or(0);
                 by_start.push((start, end, idx));
             }
         }
@@ -202,7 +214,7 @@ impl EventSelector {
     }
 
     /// Check if any events have active animations
-    fn has_animated_events(&self, events: &[&Event], time_cs: u32) -> bool {
+    fn has_animated_events(&self, events: &[&Event], time_ms: u64) -> bool {
         for event in events {
             let text = event.text;
             // Check for animation tags
@@ -215,8 +227,8 @@ impl EventSelector {
             }
             // Check for karaoke
             if text.contains(r"\k") || text.contains(r"\K") {
-                if let Ok(start) = event.start_time_cs() {
-                    if time_cs > start {
+                if let Ok(start) = event.start_time_ms() {
+                    if time_ms > start {
                         return true;
                     }
                 }

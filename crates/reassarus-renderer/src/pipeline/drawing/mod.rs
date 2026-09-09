@@ -45,6 +45,7 @@ pub enum DrawCommand {
 }
 
 /// Process ASS drawing commands into a path
+/// Process ASS drawing commands into a path
 pub fn process_drawing_commands(commands: &str) -> Result<Option<Path>, RenderError> {
     // Try to parse the commands, return None for invalid input
     let draw_commands = match parse_draw_commands(commands) {
@@ -110,6 +111,37 @@ pub fn process_drawing_commands(commands: &str) -> Result<Option<Path>, RenderEr
     }
 
     Ok(builder.finish())
+}
+
+/// Scale a path by `(sx, sy)` (e.g. script → render coordinates for
+/// drawing clips). Returns `None` for an empty result.
+pub fn scale_path(path: &Path, sx: f32, sy: f32) -> Option<Path> {
+    use tiny_skia::PathSegment;
+    let mut builder = PathBuilder::new();
+    let mut empty = true;
+    for seg in path.segments() {
+        empty = false;
+        match seg {
+            PathSegment::MoveTo(p) => builder.move_to(p.x * sx, p.y * sy),
+            PathSegment::LineTo(p) => builder.line_to(p.x * sx, p.y * sy),
+            PathSegment::QuadTo(c, p) => {
+                builder.quad_to(c.x * sx, c.y * sy, p.x * sx, p.y * sy);
+            }
+            PathSegment::CubicTo(c1, c2, p) => builder.cubic_to(
+                c1.x * sx,
+                c1.y * sy,
+                c2.x * sx,
+                c2.y * sy,
+                p.x * sx,
+                p.y * sy,
+            ),
+            PathSegment::Close => builder.close(),
+        }
+    }
+    if empty {
+        return None;
+    }
+    builder.finish()
 }
 
 /// Parse drawing commands from string

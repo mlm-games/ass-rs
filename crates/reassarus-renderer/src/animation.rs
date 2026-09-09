@@ -61,15 +61,22 @@ impl AnimationTiming {
 
     /// Calculate progress at given time (0.0 to 1.0)
     pub fn progress(&self, time_cs: u32) -> f32 {
-        if time_cs <= self.start_cs {
+        self.progress_ms(u64::from(time_cs) * 10)
+    }
+
+    /// Millisecond variant of [`progress`](AnimationTiming::progress).
+    pub fn progress_ms(&self, time_ms: u64) -> f32 {
+        let start_ms = u64::from(self.start_cs) * 10;
+        let end_ms = u64::from(self.end_cs) * 10;
+        if time_ms <= start_ms {
             return 0.0;
         }
-        if time_cs >= self.end_cs {
+        if time_ms >= end_ms {
             return 1.0;
         }
 
-        let duration = (self.end_cs - self.start_cs) as f32;
-        let elapsed = (time_cs - self.start_cs) as f32;
+        let duration = (end_ms - start_ms) as f32;
+        let elapsed = (time_ms - start_ms) as f32;
         let linear_progress = elapsed / duration;
 
         // Apply acceleration
@@ -202,7 +209,12 @@ impl AnimationTrack {
 
     /// Evaluate animation at given time
     pub fn evaluate(&self, time_cs: u32) -> AnimatedResult {
-        let progress = self.timing.progress(time_cs);
+        self.evaluate_ms(u64::from(time_cs) * 10)
+    }
+
+    /// Millisecond variant of [`evaluate`](AnimationTrack::evaluate).
+    pub fn evaluate_ms(&self, time_ms: u64) -> AnimatedResult {
+        let progress = self.timing.progress_ms(time_ms);
         let interpolated_progress = self.apply_interpolation(progress);
         self.value.interpolate(interpolated_progress)
     }
@@ -360,10 +372,15 @@ impl AnimationController {
 
     /// Evaluate all animations at given time
     pub fn evaluate(&self, time_cs: u32) -> AnimationState {
+        self.evaluate_ms(u64::from(time_cs) * 10)
+    }
+
+    /// Millisecond variant of [`evaluate`](AnimationController::evaluate).
+    pub fn evaluate_ms(&self, time_ms: u64) -> AnimationState {
         let mut state = AnimationState::new();
 
         for track in &self.tracks {
-            let result = track.evaluate(time_cs);
+            let result = track.evaluate_ms(time_ms);
             state.set_property(&track.property, result);
         }
 
@@ -372,16 +389,33 @@ impl AnimationController {
 
     /// Check if any animations are active at given time
     pub fn is_active(&self, time_cs: u32) -> bool {
-        self.tracks
-            .iter()
-            .any(|track| time_cs >= track.timing.start_cs && time_cs <= track.timing.end_cs)
+        self.is_active_ms(u64::from(time_cs) * 10)
+    }
+
+    /// Millisecond variant of [`is_active`](AnimationController::is_active).
+    pub fn is_active_ms(&self, time_ms: u64) -> bool {
+        self.tracks.iter().any(|track| {
+            let start_ms = u64::from(track.timing.start_cs) * 10;
+            let end_ms = u64::from(track.timing.end_cs) * 10;
+            time_ms >= start_ms && time_ms <= end_ms
+        })
     }
 
     /// Get all active tracks at given time
     pub fn active_tracks(&self, time_cs: u32) -> SmallVec<[&AnimationTrack; 8]> {
+        self.active_tracks_ms(u64::from(time_cs) * 10)
+    }
+
+    /// Millisecond variant of
+    /// [`active_tracks`](AnimationController::active_tracks).
+    pub fn active_tracks_ms(&self, time_ms: u64) -> SmallVec<[&AnimationTrack; 8]> {
         self.tracks
             .iter()
-            .filter(|track| time_cs >= track.timing.start_cs && time_cs <= track.timing.end_cs)
+            .filter(|track| {
+                let start_ms = u64::from(track.timing.start_cs) * 10;
+                let end_ms = u64::from(track.timing.end_cs) * 10;
+                time_ms >= start_ms && time_ms <= end_ms
+            })
             .collect()
     }
 }

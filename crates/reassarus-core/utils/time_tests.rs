@@ -93,3 +93,28 @@ fn format_ass_time_edge_cases() {
     assert_eq!(format_ass_time(601), "0:00:06.01");
     assert_eq!(format_ass_time(3661), "0:00:36.61");
 }
+
+#[test]
+fn parse_ass_times_ms() {
+    assert_eq!(parse_ass_time_ms("0:00:00.00").unwrap(), 0);
+    assert_eq!(parse_ass_time_ms("0:00:01.00").unwrap(), 1000);
+    assert_eq!(parse_ass_time_ms("0:01:30.50").unwrap(), 90_500);
+    // The third digit survives (the cs parser truncates it).
+    assert_eq!(parse_ass_time_ms("0:00:01.234").unwrap(), 1234);
+    assert_eq!(parse_ass_time_ms("0:00:27.021").unwrap(), 27_021);
+    assert_eq!(parse_ass_time_ms("0:00:00.5").unwrap(), 500);
+    assert_eq!(parse_ass_time_ms("1:00:00.00").unwrap(), 3_600_000);
+    // cs value is always exactly ms / 10 for two-digit fractions.
+    assert_eq!(
+        parse_ass_time("0:02:03.45").unwrap(),
+        u32::try_from(parse_ass_time_ms("0:02:03.45").unwrap() / 10).unwrap()
+    );
+}
+
+#[test]
+fn parse_ass_times_ms_invalid() {
+    assert!(parse_ass_time_ms("invalid").is_err());
+    assert!(parse_ass_time_ms("0:60:00.00").is_err());
+    assert!(parse_ass_time_ms("0:00:60.00").is_err());
+    assert!(parse_ass_time_ms("0:00:00.xx").is_err());
+}
