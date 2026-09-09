@@ -25,27 +25,32 @@
 //! - `Karaoke` → base `Text` in the secondary colour plus a `PushClip`
 //!   window of `progress * width` carrying the sung (primary) colour.
 //! - `Rotation` (`\frz`) → `PushTransform`; `Scale` folds into the same
-//!   transform. `Rotation.x/y` (perspective) and `Shear` have no `PushTransform`
-//!   representation and are counted in [`BuiltScene::skipped_shear`] instead
-//!   of being silently dropped.
+//!   transform. `Shear` (`\fax`/`\fay`) maps directly onto the transform's
+//!   shear factors. `Rotation.x/y` (perspective) folds into shear with the
+//!   same sin-based skew approximation the software reference uses, so no
+//!   effect class is silently dropped.
 //! - `Clip` → `PushClip`/`PopClip` (`Intersect`/`Difference` for
 //!   `\clip`/`\iclip`).
 //! - `Vector` → tessellated `VectorMesh` (solid fill, optional stroke).
-//! - `Raster` → skipped: bitmap upload needs renderer image handles, which
-//!   only exist behind a live `WgpuSceneRenderer`. Counted in
-//!   [`BuiltScene::skipped_raster`].
+//! - `Raster` → uploaded with `register_image_rgba8` and emitted as an
+//!   `Image` node by [`ReposeBackend::composite_layers`]. The pure
+//!   [`layers_to_scene`] (used by parity tests, no GPU) still counts these
+//!   in [`BuiltScene::skipped_raster`].
 //! - `OpaqueBox` → backing `Rect` node.
 
+use core::f32::consts::PI;
 use std::sync::Arc;
 
 use repose_core::{
-    BlendMode, Brush, ClipOp, Color, DrawStyle, FontStyle, FontWeight, PaintDesc, Px, Rect,
-    Scene, SceneNode, StrokeCap, StrokeJoin, TextAlign, TextDecoration, TextExtraStyle,
+    BlendMode, Brush, ClipOp, Color, DrawStyle, FontStyle, FontWeight, ImageFit, PaintDesc, Px,
+    Rect, Scene, SceneNode, StrokeCap, StrokeJoin, TextAlign, TextDecoration, TextExtraStyle,
     Transform, VectorMeshData, VectorVertex,
 };
 
 use super::{BackendFeature, BackendType, RenderBackend};
-use crate::pipeline::{IntermediateLayer, Pipeline, SoftwarePipeline, TextData, TextEffect, VectorData};
+use crate::pipeline::{
+    IntermediateLayer, Pipeline, RasterData, SoftwarePipeline, TextData, TextEffect, VectorData,
+};
 use crate::renderer::RenderContext;
 use crate::utils::{DirtyRegion, RenderError};
 
@@ -95,7 +100,8 @@ impl RenderBackend for ReposeBackend {
     ) -> Result<Vec<u8>, RenderError> {
         let width = context.width().max(1);
         let height = context.height().max(1);
-        let scene = layers_to_scene(layers, width, height).scene;
+        // The scene needs the offscreen renderer for raster uploads, so make
+        // sure it exists (and matches the frame size) before building it.
         if self.offscreen.is_none() {
             let renderer =
                 repose_render_wgpu::offscreen::OffscreenRenderer::new_blocking(width, height, 4)
@@ -116,6 +122,13 @@ impl RenderBackend for ReposeBackend {
             self.width = width;
             self.height = height;
         }
+        let scene = {
+            let renderer = offscreen.renderer_mut();
+            build_scene(layers, width, height, &mut |data: &RasterData| {
+                upload_raster(renderer, data)
+            })
+            .scene
+        };
         offscreen.render_rgba(&scene, None).map_err(|e| {
             RenderError::BackendError(format!("repose offscreen render failed: {e:#}"))
         })
@@ -139,19 +152,18 @@ impl RenderBackend for ReposeBackend {
 
 /// Output of [`layers_to_scene`] with loss accounting.
 ///
-/// Anything the scene graph cannot express (raster uploads, shear,
-/// perspective rotation, failed tessellation) is counted here so parity
-/// tests fail loudly instead of comparing a silently degraded scene.
+/// Anything the scene graph cannot express without a live renderer (raster
+/// uploads, failed tessellation) is counted here so parity tests fail loudly
+/// instead of comparing a silently degraded scene.
 #[derive(Debug)]
 pub struct BuiltScene {
     /// The composed scene, ready for `render_scene_to_encoder` or offscreen
     /// readback via `OffscreenRenderer`.
     pub scene: Scene,
-    /// `Raster` layers skipped (need live renderer image handles).
+    /// `Raster` layers skipped (need live renderer image handles; only
+    /// non-zero for the GPU-less [`layers_to_scene`], never for
+    /// [`RenderBackend::composite_layers`]).
     pub skipped_raster: usize,
-    /// `Shear` effects plus `Rotation.x/y` skipped (no `PushTransform`
-    /// representation for skew/perspective).
-    pub skipped_shear: usize,
     /// Vector layers whose tessellation failed.
     pub skipped_tess: usize,
 }
@@ -160,8 +172,25 @@ pub struct BuiltScene {
 ///
 /// `width`/`height` are the frame size in physical pixels; the scene clears
 /// to transparent so subtitles composite over video.
+///
+/// Pure CPU: needs no GPU, which is what the parity tests exercise. Raster
+/// layers are counted in [`BuiltScene::skipped_raster`] — use
+/// [`RenderBackend::composite_layers`] for the upload path.
 #[must_use]
 pub fn layers_to_scene(layers: &[IntermediateLayer], width: u32, height: u32) -> BuiltScene {
+    build_scene(layers, width, height, &mut |_| None)
+}
+
+/// [`layers_to_scene`] with a raster-image upload hook.
+///
+/// Called in layer order so z-order is preserved. Returning `None` counts
+/// the layer in [`BuiltScene::skipped_raster`].
+fn build_scene(
+    layers: &[IntermediateLayer],
+    width: u32,
+    height: u32,
+    upload_raster: &mut dyn FnMut(&RasterData) -> Option<SceneNode>,
+) -> BuiltScene {
     let _ = (width, height);
     let mut out = BuiltScene {
         scene: Scene {
@@ -169,13 +198,15 @@ pub fn layers_to_scene(layers: &[IntermediateLayer], width: u32, height: u32) ->
             nodes: Vec::new(),
         },
         skipped_raster: 0,
-        skipped_shear: 0,
         skipped_tess: 0,
     };
     let mut layers_ctx = LayerCtx { next_layer_id: 1 };
     for layer in layers {
         match layer {
-            IntermediateLayer::Raster(_) => out.skipped_raster += 1,
+            IntermediateLayer::Raster(data) => match upload_raster(data) {
+                Some(node) => out.scene.nodes.push(node),
+                None => out.skipped_raster += 1,
+            },
             IntermediateLayer::Vector(data) => {
                 if !emit_vector(&mut out, data) {
                     out.skipped_tess += 1;
@@ -185,6 +216,31 @@ pub fn layers_to_scene(layers: &[IntermediateLayer], width: u32, height: u32) ->
         }
     }
     out
+}
+
+/// Upload a raster layer to the GPU and wrap it in an `Image` node.
+///
+/// Returns `None` for empty layers. The software reference draws raster
+/// layers verbatim (ignoring `opacity`), so the tint stays opaque white.
+fn upload_raster(
+    renderer: &mut repose_render_wgpu::WgpuSceneRenderer,
+    data: &RasterData,
+) -> Option<SceneNode> {
+    if data.width == 0 || data.height == 0 || data.pixels.is_empty() {
+        return None;
+    }
+    let handle = renderer.register_image_rgba8(data.width, data.height, &data.pixels, true);
+    Some(SceneNode::Image {
+        rect: Rect {
+            x: data.x as f32,
+            y: data.y as f32,
+            w: data.width as f32,
+            h: data.height as f32,
+        },
+        handle,
+        tint: Color::from_rgba(255, 255, 255, 255),
+        fit: ImageFit::FillBounds,
+    })
 }
 
 /// Per-scene counter for graphics-layer ids.
@@ -226,7 +282,7 @@ struct TextPass<'a> {
 type OutlineSpec = ([u8; 4], f32);
 
 /// `\frz` degrees plus `\org` rotation centre in screen pixels.
-type RotationSpec = (f32, f32, f32, Option<(f32, f32)>);
+type RotationSpec = (f32, Option<(f32, f32)>);
 
 fn text_node(pass: &TextPass<'_>, draw_style: DrawStyle) -> SceneNode {
     SceneNode::Text {
@@ -284,6 +340,9 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
     let mut karaoke: Option<(f32, [u8; 4])> = None;
     let mut rotation: Option<RotationSpec> = None;
     let mut scale: Option<(f32, f32)> = None;
+    // Accumulated (shear_x, shear_y): `\fax`/`\fay` plus the software
+    // reference's sin-based `\frx`/`\fry` skew approximation.
+    let mut shear: Option<(f32, f32)> = None;
     let mut clip: Option<(f32, f32, f32, f32, bool)> = None;
     let mut opaque: Option<([u8; 4], f32)> = None;
 
@@ -307,12 +366,24 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                 ..
             } => karaoke = Some((progress.clamp(0.0, 1.0), *secondary)),
             TextEffect::Rotation { x, y, z, origin } => {
-                if *x != 0.0 || *y != 0.0 {
-                    out.skipped_shear += 1;
+                // No true perspective in the scene graph: fold `\frx`/`\fry`
+                // into shear with the software reference's approximation
+                // (skew = sin(angle) * 0.5 around the text centre).
+                if *x != 0.0 {
+                    let s = shear.get_or_insert((0.0, 0.0));
+                    s.1 += (*x * PI / 180.0).sin() * 0.5;
                 }
-                rotation = Some((*x, *y, *z, *origin));
+                if *y != 0.0 {
+                    let s = shear.get_or_insert((0.0, 0.0));
+                    s.0 += (*y * PI / 180.0).sin() * 0.5;
+                }
+                rotation = Some((*z, *origin));
             }
-            TextEffect::Shear { .. } => out.skipped_shear += 1,
+            TextEffect::Shear { x, y } => {
+                let s = shear.get_or_insert((0.0, 0.0));
+                s.0 += *x;
+                s.1 += *y;
+            }
             TextEffect::Scale { x, y } => scale = Some((*x, *y)),
             TextEffect::Clip {
                 x1,
@@ -355,13 +426,13 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
         });
     }
 
-    let has_transform = rotation.is_some() || scale.is_some();
+    let has_transform = rotation.is_some() || scale.is_some() || shear.is_some();
     if has_transform {
         let (sx, sy) = scale.unwrap_or((1.0, 1.0));
-        let z_deg = rotation.map_or(0.0, |(_, _, z, _)| z);
+        let (z_deg, origin) = rotation.unwrap_or((0.0, None));
         // ASS rotates counter-clockwise in degrees; repose takes radians.
         let rotate = -z_deg.to_radians();
-        let origin = rotation.and_then(|(_, _, _, o)| o);
+        let (shear_x, shear_y) = shear.unwrap_or((0.0, 0.0));
         let (origin_x, origin_y) = origin.map_or((0.5, 0.5), |(ox, oy)| {
             (
                 ((ox - rect.x) / rect.w.max(1.0)).clamp(0.0, 1.0),
@@ -375,6 +446,8 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                 scale_x: sx,
                 scale_y: sy,
                 rotate,
+                shear_x,
+                shear_y,
                 origin_x,
                 origin_y,
             },

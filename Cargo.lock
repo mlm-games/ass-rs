@@ -2657,7 +2657,7 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "repose-core"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "log",
  "parking_lot",
@@ -2669,7 +2669,7 @@ dependencies = [
 
 [[package]]
 name = "repose-macros"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2678,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "repose-render-wgpu"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2696,7 +2696,7 @@ dependencies = [
 
 [[package]]
 name = "repose-text"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "font-awl",
  "js-sys",

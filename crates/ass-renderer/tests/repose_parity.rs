@@ -68,7 +68,6 @@ fn plain_fill_emits_single_text_node() {
     let layers = layers_at(200, "Hello");
     let built = layers_to_scene(&layers, 1280, 720);
     assert_eq!(built.skipped_raster, 0);
-    assert_eq!(built.skipped_shear, 0);
     let texts = text_nodes(&built.scene.nodes);
     assert_eq!(texts.len(), 1, "plain fill: one Text node");
 }
@@ -170,12 +169,17 @@ fn rotation_emits_transform() {
 }
 
 #[test]
-fn shear_is_counted_not_silent() {
+fn shear_emits_transform() {
     let layers = layers_at(200, r"{\fax2}Hello");
     let built = layers_to_scene(&layers, 1280, 720);
+    let shear = built.scene.nodes.iter().find_map(|node| match node {
+        SceneNode::PushTransform { transform } => Some((transform.shear_x, transform.shear_y)),
+        _ => None,
+    });
+    let (shear_x, shear_y) = shear.expect("shear must emit PushTransform");
     assert!(
-        built.skipped_shear > 0,
-        "shear has no PushTransform representation and must be counted"
+        (shear_x - 2.0).abs() < 1e-4 && shear_y.abs() < 1e-4,
+        "\\fax2 must land in shear_x, got ({shear_x}, {shear_y})"
     );
 }
 

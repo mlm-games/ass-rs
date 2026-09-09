@@ -23,8 +23,8 @@ ttf-parser = "0.20"
 rayon = { version = "1.10", optional = true }
 
 # Repose GPU backend (scene emission + offscreen readback)
-repose-core = { path = "../../../repose/crates/repose-core", optional = true }
-repose-render-wgpu = { path = "../../../repose/crates/repose-render-wgpu", optional = true }
+repose-core = { version = "0.30", optional = true }
+repose-render-wgpu = { version = "0.30", optional = true }
 lyon_path = { version = "1.0", optional = true }
 lyon_tessellation = { version = "1.0", optional = true }
 
@@ -48,16 +48,36 @@ pretty_assertions = "1.4"
 env_logger = "0.11"
 
 [features]
-default = ["analysis-integration", "software-backend", "backend-probing", "simd", "image", "serde"]
+default = [
+    "analysis-integration",
+    "repose-backend",
+    "backend-probing",
+    "simd",
+    "image",
+    "serde",
+]
 
 # Main feature sets
 minimal = ["nostd", "analysis-integration"]
-full = ["analysis-integration", "software-backend", "backend-probing", "simd", "image", "serde"]
+full = [
+    "analysis-integration",
+    "repose-backend",
+    "software-backend",
+    "backend-probing",
+    "simd",
+    "image",
+    "serde",
+]
 
 # Core features
 analysis-integration = ["ass-core/analysis"]
 software-backend = ["rayon"]
-repose-backend = ["dep:repose-core", "dep:repose-render-wgpu", "dep:lyon_path", "dep:lyon_tessellation"]
+repose-backend = [
+    "dep:repose-core",
+    "dep:repose-render-wgpu",
+    "dep:lyon_path",
+    "dep:lyon_tessellation",
+]
 backend-probing = []
 backend-metrics = []
 
@@ -84,7 +104,13 @@ unicode-wrap = ["ass-core/unicode-wrap"]
 
 # Development features
 benches = []
-docs = ["full", "repose-backend", "unicode-wrap", "plugins", "benches"] # Safe feature set for documentation
+docs = [
+    "full",
+    "repose-backend",
+    "unicode-wrap",
+    "plugins",
+    "benches",
+] # Safe feature set for documentation
 
 # Plugin system support
 plugins = []
@@ -107,8 +133,17 @@ required-features = ["software-backend", "image", "analysis-integration"]
 
 [[example]]
 name = "libass_ffi_compare"
-required-features = ["software-backend", "image", "analysis-integration", "libass-compare"]
+required-features = [
+    "software-backend",
+    "image",
+    "analysis-integration",
+    "libass-compare",
+]
 
 [[example]]
 name = "libass_bench"
-required-features = ["software-backend", "analysis-integration", "libass-compare"]
+required-features = [
+    "software-backend",
+    "analysis-integration",
+    "libass-compare",
+]
