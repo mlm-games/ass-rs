@@ -458,8 +458,14 @@ impl SoftwareBackend {
             }
         });
         let outline_info = data.effects.iter().find_map(|e| {
-            if let crate::pipeline::TextEffect::Outline { color, width } = e {
-                Some((*color, *width))
+            if let crate::pipeline::TextEffect::Outline {
+                color,
+                width_x,
+                width_y,
+            } = e
+            {
+                // Uniform raster stroke until anisotropic outlines land.
+                Some((*color, width_x.max(*width_y)))
             } else {
                 None
             }
@@ -564,7 +570,14 @@ impl SoftwareBackend {
 
         // Draw outline if present
         for effect in &data.effects {
-            if let crate::pipeline::TextEffect::Outline { color, width } = effect {
+            if let crate::pipeline::TextEffect::Outline {
+                color,
+                width_x,
+                width_y,
+            } = effect
+            {
+                // Uniform raster stroke until anisotropic outlines land.
+                let axis_max = width_x.max(*width_y);
                 let mut outline_paint = tiny_skia::Paint::default();
                 outline_paint.set_color_rgba8(color[0], color[1], color[2], color[3]);
                 outline_paint.anti_alias = true;
@@ -572,7 +585,7 @@ impl SoftwareBackend {
 
                 // Create stroke configuration for path expansion
                 let stroke = tiny_skia::Stroke {
-                    width: *width * 0.6, // Further reduce width to match libass
+                    width: axis_max * 0.6, // Further reduce width to match libass
                     line_cap: tiny_skia::LineCap::Square,
                     line_join: tiny_skia::LineJoin::Miter,
                     ..Default::default()
@@ -583,17 +596,17 @@ impl SoftwareBackend {
                     if blur_radius > 0.0 {
                         let blur_size = (blur_radius * 2.0).ceil() as u32;
                         let outline_width =
-                            (shaped.width + blur_size as f32 * 2.0 + *width * 2.0).ceil() as u32;
+                            (shaped.width + blur_size as f32 * 2.0 + axis_max * 2.0).ceil() as u32;
                         let outline_height =
-                            (shaped.height + blur_size as f32 * 2.0 + *width * 2.0).ceil() as u32;
+                            (shaped.height + blur_size as f32 * 2.0 + axis_max * 2.0).ceil() as u32;
 
                         if let Some(mut temp_pixmap) = Pixmap::new(outline_width, outline_height) {
                             temp_pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
                             // Draw outline to temporary pixmap
                             let temp_transform = Transform::from_translate(
-                                blur_size as f32 + *width,
-                                blur_size as f32 + *width,
+                                blur_size as f32 + axis_max,
+                                blur_size as f32 + axis_max,
                             );
 
                             let mut stroker = tiny_skia::PathStroker::new();
@@ -620,8 +633,8 @@ impl SoftwareBackend {
 
                             // Draw blurred outline to main pixmap
                             let blend_transform = base_transform.pre_translate(
-                                -(blur_size as f32) - *width,
-                                -(blur_size as f32) - *width,
+                                -(blur_size as f32) - axis_max,
+                                -(blur_size as f32) - axis_max,
                             );
 
                             let paint = tiny_skia::PixmapPaint {
@@ -1065,7 +1078,11 @@ fn coverage_key(
     let mut fill_color = data.color;
     for effect in &data.effects {
         match effect {
-            TextEffect::Outline { color, width } => outline = Some((*color, *width)),
+            TextEffect::Outline {
+                color,
+                width_x,
+                width_y,
+            } => outline = Some((*color, width_x.max(*width_y))),
             TextEffect::Shadow {
                 color,
                 x_offset,

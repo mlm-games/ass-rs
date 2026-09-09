@@ -1342,7 +1342,10 @@ impl SoftwarePipeline {
                 } else if outline_width_x > 0.0 || outline_width_y > 0.0 {
                     layer.effects.push(TextEffect::Outline {
                         color: outline_color,
-                        width: border_width, // Use max for now
+                        // Preserve both axes: rasterizers approximate with
+                        // max until anisotropic outlines are supported.
+                        width_x: outline_width_x,
+                        width_y: outline_width_y,
                     });
                 }
 
@@ -1411,14 +1414,16 @@ impl SoftwarePipeline {
                     });
                 }
 
-                // Add shear effects if present
-                if let Some(shear_x) = tags.shear_x {
-                    if shear_x != 0.0 || tags.shear_y.unwrap_or(0.0) != 0.0 {
-                        layer.effects.push(TextEffect::Shear {
-                            x: shear_x,
-                            y: tags.shear_y.unwrap_or(0.0),
-                        });
-                    }
+                // Add shear effects if present on either axis. `\fay` alone
+                // must still emit (previously gated on `shear_x`, which
+                // silently dropped a lone `\fay`).
+                let shear_x = tags.shear_x.unwrap_or(0.0);
+                let shear_y = tags.shear_y.unwrap_or(0.0);
+                if shear_x != 0.0 || shear_y != 0.0 {
+                    layer.effects.push(TextEffect::Shear {
+                        x: shear_x,
+                        y: shear_y,
+                    });
                 }
 
                 // Add scale effect if X-scale is not 100%

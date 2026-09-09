@@ -1,7 +1,7 @@
 //! In-process libass A/B comparison (dev-only; needs the `libass-compare`
 //! feature and a native libass via vcpkg/pkg-config).
 //!
-//! Renders an `.ass` with the software backend and with libass directly,
+//! Renders an `.ass` with one of our backends and with libass directly,
 //! composites both over black, and prints a concise pixel-diff report plus
 //! libass's per-line bitmap geometry — so spacing/placement gaps are read off
 //! libass's own output (the `ASS_Image` rectangles) instead of guessed.
@@ -10,9 +10,14 @@
 //! ```text
 //! cargo run --features full,libass-compare --example libass_ffi_compare -- \
 //!     --ass FILE --size 1280x720 --time 200 [--family Arial] [--out DIR] [--tol 16]
+//!     [--backend software|repose] [--fonts-dir DIR]
 //! ```
-//! `--time` is in centiseconds. Uses system fonts on both sides by default so
-//! results line up with the ffmpeg harness; pass `--fonts-dir` for a pinned set.
+//! `--time` is in centiseconds. `--fonts-dir` pins the SAME font set on both
+//! sides (and disables uncontrolled system fallback there); without it both
+//! sides use system fonts so results line up with the ffmpeg harness.
+//! `--backend repose` renders our side through the Repose adapter and needs a
+//! WGPU adapter (mesa-vulkan-drivers suffices headless); it fails loudly
+//! without one instead of silently falling back.
 
 use image::RgbImage;
 use reassarus_core::parser::Script;
@@ -28,6 +33,7 @@ struct Config {
     time_cs: u32,
     family: String,
     fonts_dir: Option<String>,
+    backend: BackendType,
     out: PathBuf,
     tol: u8,
 }
@@ -45,6 +51,7 @@ fn parse_config() -> Result<Config, String> {
     let (mut width, mut height, mut time_cs, mut tol) = (1280u32, 720u32, 0u32, 16u8);
     let mut family = String::from("Arial");
     let mut fonts_dir = None;
+    let mut backend = BackendType::Software;
     let mut out = PathBuf::from("target/libass-ffi");
     let mut i = 0;
     while i < argv.len() {
@@ -59,6 +66,13 @@ fn parse_config() -> Result<Config, String> {
             "--time" => time_cs = next_val(&argv, &mut i)?.parse().map_err(|_| "bad --time")?,
             "--family" => family = next_val(&argv, &mut i)?,
             "--fonts-dir" => fonts_dir = Some(next_val(&argv, &mut i)?),
+            "--backend" => {
+                backend = match next_val(&argv, &mut i)?.as_str() {
+                    "software" => BackendType::Software,
+                    "repose" => BackendType::Repose,
+                    other => return Err(format!("bad --backend {other} (software|repose)")),
+                };
+            }
             "--out" => out = PathBuf::from(next_val(&argv, &mut i)?),
             "--tol" => tol = next_val(&argv, &mut i)?.parse().map_err(|_| "bad --tol")?,
             other => return Err(format!("unknown arg {other}")),
@@ -73,6 +87,7 @@ fn parse_config() -> Result<Config, String> {
         time_cs,
         family,
         fonts_dir,
+        backend,
         out,
         tol,
     })
@@ -90,9 +105,18 @@ fn composite_over_black(rgba: &[u8], pixels: usize) -> Vec<u8> {
 }
 
 fn render_ours(cfg: &Config, script: &Script) -> Result<Vec<u8>, String> {
-    let ctx = RenderContext::new(cfg.width, cfg.height);
-    let mut renderer =
-        Renderer::new(BackendType::Software, ctx).map_err(|e| format!("renderer: {e}"))?;
+    // Mirror the libass side: with `--fonts-dir` both sides see exactly the
+    // pinned set (no system fallback on either side); without it both sides
+    // use system fonts.
+    let ctx = match &cfg.fonts_dir {
+        Some(dir) => {
+            let mut db = fontdb::Database::new();
+            db.load_fonts_dir(dir);
+            RenderContext::with_font_database(cfg.width, cfg.height, db)
+        }
+        None => RenderContext::new(cfg.width, cfg.height),
+    };
+    let mut renderer = Renderer::new(cfg.backend, ctx).map_err(|e| format!("renderer: {e}"))?;
     let frame = renderer
         .render_frame(script, cfg.time_cs)
         .map_err(|e| format!("render: {e}"))?;
@@ -255,12 +279,14 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("save libass: {e}"))?;
 
     println!(
-        "ass: {}  t={}cs  {}x{}  tol={}",
+        "ass: {}  t={}cs  {}x{}  tol={}  backend={:?}  fonts={}",
         cfg.ass.display(),
         cfg.time_cs,
         cfg.width,
         cfg.height,
-        cfg.tol
+        cfg.tol,
+        cfg.backend,
+        cfg.fonts_dir.as_deref().unwrap_or("system"),
     );
     println!(
         "diff: {:.3}% px>tol  MAE={:.2}  MAXE={}  ink_mass ours/libass={mass_ratio:.4}",

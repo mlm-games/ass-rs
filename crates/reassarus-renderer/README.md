@@ -6,12 +6,11 @@ High-performance ASS (Advanced SubStation Alpha) subtitle renderer with modular 
 
 ## Features
 
-- **Multiple Rendering Backends**
-  - Software (CPU) rendering with tiny-skia (RECOMMENDED - fully implemented)
-  - WebGPU for web and native GPU acceleration (experimental)
-  - Vulkan for high-performance GPU rendering (experimental)
-  - Metal for macOS/iOS (experimental)
-  - WebGL is NOT supported - use Software backend instead
+- **Two Rendering Backends**
+  - Software (CPU) rendering with tiny-skia (RECOMMENDED - fully implemented;
+    also the correctness reference for the GPU path)
+  - Repose (GPU) scene adapter: composes subtitles with the rest of a Repose
+    UI via `repose-core` + `repose-render-wgpu` offscreen readback
   - Automatic backend selection (defaults to Software)
 
 - **Complete ASS/SSA Support**
@@ -64,13 +63,23 @@ use reassarus_renderer::{Renderer, RenderContext, BackendType};
 let mut renderer = Renderer::new(BackendType::Software, context)?;
 ```
 
-### Hardware Backends (Experimental)
-GPU acceleration backends are experimental and may have incomplete feature support:
+### Repose Backend (GPU scene adapter)
+Emits the shared pipeline layers as a Repose `Scene` so subtitles compose
+with the rest of a Repose UI, resolved to pixels through
+`repose-render-wgpu` offscreen readback:
 
-- **WebGPU**: Cross-platform GPU acceleration (basic implementation)
-- **Vulkan**: High-performance native GPU (basic implementation)  
-- **Metal**: macOS/iOS GPU acceleration (basic implementation)
-- **WebGL**: NOT SUPPORTED - use Software backend for web
+```rust
+use reassarus_renderer::{Renderer, RenderContext, BackendType};
+
+// GPU path: needs a WGPU adapter at render time
+// (mesa-vulkan-drivers suffices headless); fails loudly without one.
+let mut renderer = Renderer::new(BackendType::Repose, context)?;
+```
+
+The pure-CPU `backends::repose::layers_to_scene` conversion (no GPU) is what
+the structural parity tests exercise. Known approximations vs the software
+reference are documented on `backends::repose` (perspective `\frx`/`\fry`
+folded to shear, estimated text bounds, whole-run blur temps).
 
 For production use, we strongly recommend the Software backend which has full feature support and has been thoroughly tested.
 
@@ -124,16 +133,22 @@ Optimized for high performance:
 
 ## Feature Flags
 
-- `default`: Enables software backend and analysis integration
+- `default`: analysis integration, Repose backend, backend probing, SIMD,
+  image export, serde
+- `minimal`: `nostd`-compatible core (`nostd` + analysis integration)
+- `full`: everything below
 - `software-backend`: CPU rendering support
-- `hardware-backend`: Vulkan and Metal support
-- `web-backend`: WebGPU support
+- `repose-backend`: GPU scene adapter (`repose-core`, `repose-render-wgpu`)
+- `backend-probing` / `backend-metrics`: backend selection helpers / metrics
 - `simd`: SIMD acceleration
 - `arena`: Arena allocator for reduced allocations
 - `analysis-integration`: Integration with reassarus-core analysis
-- `backend-metrics`: Performance metrics collection
+- `image`: image export support
 - `serde`: Serialization support
-- `nostd`: No-std support (limited backends)
+- `unicode-wrap`: Unicode line-break support
+- `nostd`: No-std support (software backend only; the Repose backend needs
+  std + GPU)
+- `libass-compare`: dev-only native-libass A/B comparison
 
 ## Benchmarks
 
@@ -156,4 +171,4 @@ cargo test --package reassarus-renderer --all-features
 
 ## License
 
-MIT OR Apache-2.0
+MPL-2.0

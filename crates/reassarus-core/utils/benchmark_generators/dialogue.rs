@@ -109,7 +109,7 @@ impl ScriptGenerator {
         }
 
         // Add final effect
-        if event_index % 3 == 0 {
+        if event_index.is_multiple_of(3) {
             karaoke_text.push_str(r"{\t(2000,3000,\fscx120\fscy120\alpha&HFF&)}");
         }
 

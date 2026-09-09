@@ -174,8 +174,16 @@ pub enum TextEffect {
     Underline,
     /// Strikethrough
     Strikethrough,
-    /// Outline with color and width
-    Outline { color: [u8; 4], width: f32 },
+    /// Outline with color and per-axis widths (`\bordx`/`\bordy`).
+    ///
+    /// Both axes are preserved from evaluation through the IR. Rasterizers
+    /// approximate with `max(width_x, width_y)` until anisotropic outlines
+    /// are supported; do not collapse the axes at emission.
+    Outline {
+        color: [u8; 4],
+        width_x: f32,
+        width_y: f32,
+    },
     /// Shadow with color and offset
     Shadow {
         color: [u8; 4],

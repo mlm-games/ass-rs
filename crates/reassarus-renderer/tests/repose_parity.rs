@@ -185,7 +185,8 @@ fn shear_emits_transform() {
 
 #[test]
 fn karaoke_sweep_emits_progress_clip() {
-    let dialogue = r"{\k100}Ka{\k100}ra";
+    // Swept style (`\K`): secondary base plus a clipped sung window.
+    let dialogue = r"{\K100}Ka{\K100}ra";
     // Mid second syllable: first fully sung, second partially.
     let n = reference_covers(dialogue, 150);
     assert!(n > 0, "reference must cover pixels, got {n}");
@@ -205,6 +206,171 @@ fn karaoke_sweep_emits_progress_clip() {
         text_nodes(&built.scene.nodes).len() >= 2,
         "karaoke needs sung + unsung Text nodes"
     );
+}
+
+#[test]
+fn karaoke_basic_flips_without_sweep_clip() {
+    // Basic `\k` flips the whole run at progress > 0 (like the software
+    // reference) instead of sweeping: no karaoke PushClip may be emitted.
+    let dialogue = r"{\k100}Ka{\k100}ra";
+    let layers = layers_at(150, dialogue);
+    let built = layers_to_scene(&layers, 1280, 720);
+    assert_eq!(built.skipped_tess, 0);
+    let clips = built
+        .scene
+        .nodes
+        .iter()
+        .filter(|node| matches!(node, SceneNode::PushClip { .. }))
+        .count();
+    assert_eq!(clips, 0, "basic \\k must not emit a sweep PushClip");
+    assert!(
+        text_nodes(&built.scene.nodes).len() >= 2,
+        "basic \\k still needs sung + unsung Text nodes"
+    );
+}
+
+#[test]
+fn scale_percent_normalizes_to_multiplier() {
+    // `\fscx150` is 150 PERCENT: the transform must carry 1.5x, and Y must
+    // stay 1.0 because it is already baked into the font size at shaping.
+    let layers = layers_at(200, r"{\fscx150}Hello");
+    let built = layers_to_scene(&layers, 1280, 720);
+    let scale = built.scene.nodes.iter().find_map(|node| match node {
+        SceneNode::PushTransform { transform } => Some((transform.scale_x, transform.scale_y)),
+        _ => None,
+    });
+    let (sx, sy) = scale.expect("scale must emit PushTransform");
+    assert!(
+        (sx - 1.5).abs() < 1e-4,
+        "\\fscx150 must become 1.5x, got {sx}"
+    );
+    assert!(
+        (sy - 1.0).abs() < 1e-4,
+        "Y scale is pre-applied to the font size, got {sy}"
+    );
+}
+
+#[test]
+fn fay_alone_emits_shear() {
+    // A lone `\fay` (no `\fax`) must still reach the transform; it used to
+    // be dropped by the shear emission gate.
+    let layers = layers_at(200, r"{\fay1}Hello");
+    let built = layers_to_scene(&layers, 1280, 720);
+    let shear = built.scene.nodes.iter().find_map(|node| match node {
+        SceneNode::PushTransform { transform } => Some((transform.shear_x, transform.shear_y)),
+        _ => None,
+    });
+    let (shear_x, shear_y) = shear.expect("lone \\fay must emit PushTransform");
+    assert!(
+        shear_x.abs() < 1e-4 && (shear_y - 1.0).abs() < 1e-4,
+        "\\fay1 must land in shear_y, got ({shear_x}, {shear_y})"
+    );
+}
+
+#[test]
+fn text_carries_resolved_font_family() {
+    // The pipeline resolves the style font; the adapter must forward it so
+    // Repose selects the right face instead of its default.
+    let layers = layers_at(200, "Hello");
+    let built = layers_to_scene(&layers, 1280, 720);
+    let family = built.scene.nodes.iter().find_map(|node| match node {
+        SceneNode::Text { font_family, .. } => Some(*font_family),
+        _ => None,
+    });
+    assert_eq!(
+        family,
+        Some(Some("Arial")),
+        "Text node must carry the resolved family"
+    );
+}
+
+#[test]
+fn edge_blur_wraps_outline_only() {
+    // `\be` blurs just the outline stroke: the stroke lives inside a blur
+    // layer while the fill stays outside it. (Full `\blur` wraps the run.)
+    let dialogue = r"{\bord2\be2}Hello";
+    let n = reference_covers(dialogue, 200);
+    assert!(n > 0, "reference must cover pixels, got {n}");
+    let layers = layers_at(200, dialogue);
+    let built = layers_to_scene(&layers, 1280, 720);
+    let nodes = &built.scene.nodes;
+    let begin = nodes
+        .iter()
+        .position(|n| matches!(n, SceneNode::BeginLayer { .. }))
+        .expect("\\be must open a blur layer");
+    let end = nodes
+        .iter()
+        .position(|n| matches!(n, SceneNode::EndLayer { .. }))
+        .expect("\\be layer must close");
+    assert!(begin < end, "layer must open before it closes");
+    let sharp_fill = nodes.iter().enumerate().any(|(i, n)| {
+        matches!(
+            n,
+            SceneNode::Text { extra_style, .. }
+            if matches!(
+                extra_style.draw_style,
+                repose_core::DrawStyle::Fill
+            )
+        ) && (i < begin || i > end)
+    });
+    assert!(
+        sharp_fill,
+        "the fill Text node must stay outside the edge-blur layer"
+    );
+}
+
+#[test]
+fn distant_org_keeps_true_pivot() {
+    // A far-away `\org` (rotation lever) must not be clamped into the text
+    // rectangle: Repose applies the normalized pivot in rect space.
+    let layers = layers_at(200, r"{\org(10000,10000)\frz45}Hello");
+    let built = layers_to_scene(&layers, 1280, 720);
+    let origin = built.scene.nodes.iter().find_map(|node| match node {
+        SceneNode::PushTransform { transform } => Some((transform.origin_x, transform.origin_y)),
+        _ => None,
+    });
+    let (ox, oy) = origin.expect("rotation with \\org must emit PushTransform");
+    assert!(
+        ox > 1.0 && oy > 1.0,
+        "distant \\org must stay outside [0,1], got ({ox}, {oy})"
+    );
+}
+
+#[test]
+fn vector_stroke_emits_fill_and_stroke_passes() {
+    use reassarus_renderer::pipeline::{StrokeInfo, VectorData};
+    // Drawings are filled AND stroked: one mesh per pass, each in its own
+    // colour (the stroke used to replace the fill and ignore its colour).
+    let mut builder = tiny_skia::PathBuilder::new();
+    builder.move_to(0.0, 0.0);
+    builder.line_to(60.0, 0.0);
+    builder.line_to(60.0, 60.0);
+    builder.line_to(0.0, 60.0);
+    builder.close();
+    let layers = vec![IntermediateLayer::Vector(VectorData {
+        path: builder.finish(),
+        color: [255, 0, 0, 255],
+        stroke: Some(StrokeInfo {
+            color: [0, 0, 255, 255],
+            width: 2.0,
+        }),
+        bounds: None,
+    })];
+    let built = layers_to_scene(&layers, 1280, 720);
+    assert_eq!(built.skipped_tess, 0);
+    let meshes: Vec<_> = built
+        .scene
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            SceneNode::VectorMesh { mesh, .. } => Some(mesh),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(meshes.len(), 2, "fill + stroke must emit two meshes");
+    for mesh in meshes {
+        assert!(!mesh.indices.is_empty(), "each pass must have triangles");
+    }
 }
 
 #[test]

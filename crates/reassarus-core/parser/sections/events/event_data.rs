@@ -19,21 +19,17 @@ impl<'a> EventsParser<'a> {
         line: &'a str,
         line_start: &PositionTracker<'a>,
     ) -> Option<Event<'a>> {
-        let (event_type, data) = if let Some(data) = line.strip_prefix("Dialogue:") {
-            (EventType::Dialogue, data)
-        } else if let Some(data) = line.strip_prefix("Comment:") {
-            (EventType::Comment, data)
-        } else if let Some(data) = line.strip_prefix("Picture:") {
-            (EventType::Picture, data)
-        } else if let Some(data) = line.strip_prefix("Sound:") {
-            (EventType::Sound, data)
-        } else if let Some(data) = line.strip_prefix("Movie:") {
-            (EventType::Movie, data)
-        } else if let Some(data) = line.strip_prefix("Command:") {
-            (EventType::Command, data)
-        } else {
-            return None;
-        };
+        let prefixes = [
+            ("Dialogue:", EventType::Dialogue),
+            ("Comment:", EventType::Comment),
+            ("Picture:", EventType::Picture),
+            ("Sound:", EventType::Sound),
+            ("Movie:", EventType::Movie),
+            ("Command:", EventType::Command),
+        ];
+        let (event_type, data) = prefixes.iter().find_map(|(prefix, event_type)| {
+            line.strip_prefix(prefix).map(|data| (*event_type, data))
+        })?;
 
         self.parse_event_data(event_type, data.trim(), line_start)
     }

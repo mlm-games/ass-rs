@@ -20,18 +20,24 @@
 //! - `Outline` → overlaid stroke `Text` (under) + fill `Text` (over), since
 //!   `DrawStyle` is fill-XOR-stroke per node.
 //! - `Shadow` → offset duplicate `Text` behind the main one.
-//! - `Blur`/`EdgeBlur` → `BeginLayer`/`EndLayer` with a blur radius around
-//!   the text (whole-run approximation of the reference's glyph blur).
-//! - `Karaoke` → base `Text` in the secondary colour plus a `PushClip`
-//!   window of `progress * width` carrying the sung (primary) colour.
-//! - `Rotation` (`\frz`) → `PushTransform`; `Scale` folds into the same
-//!   transform. `Shear` (`\fax`/`\fay`) maps directly onto the transform's
-//!   shear factors. `Rotation.x/y` (perspective) folds into shear with the
-//!   same sin-based skew approximation the software reference uses, so no
-//!   effect class is silently dropped.
+//! - `Blur` → `BeginLayer`/`EndLayer` with a blur radius around the whole
+//!   run (fill, outline, shadow). `EdgeBlur` (`\be`) wraps just the outline
+//!   stroke so the fill stays sharp; the two are never merged.
+//! - `Karaoke` style 0 (`\k`) flips the whole run between sung/unsung;
+//!   styles 1-3 sweep via a clipped sung window, like the software
+//!   reference.
+//! - `Rotation` (`\frz`) → `PushTransform`; `Scale` (ASS percentages) is
+//!   normalized to multipliers there — Y is already baked into the font
+//!   size during shaping, so only X is applied. `Shear` (`\fax`/`\fay`)
+//!   maps directly onto the transform's shear factors. `Rotation.x/y`
+//!   (perspective) folds into shear with the same sin-based skew
+//!   approximation the software reference uses, so no effect class is
+//!   silently dropped. `\org` maps to a normalized pivot without clamping,
+//!   so distant rotation levers keep their true position.
 //! - `Clip` → `PushClip`/`PopClip` (`Intersect`/`Difference` for
 //!   `\clip`/`\iclip`).
-//! - `Vector` → tessellated `VectorMesh` (solid fill, optional stroke).
+//! - `Vector` → tessellated `VectorMesh`es: always a fill pass, plus a
+//!   separate stroke pass in `stroke.color` when a border is set.
 //! - `Raster` → uploaded with `register_image_rgba8` and emitted as an
 //!   `Image` node by [`ReposeBackend::composite_layers`]. The pure
 //!   [`layers_to_scene`] (used by parity tests, no GPU) still counts these
@@ -122,13 +128,23 @@ impl RenderBackend for ReposeBackend {
             self.width = width;
             self.height = height;
         }
-        let scene = {
+        let built = {
             let renderer = offscreen.renderer_mut();
             build_scene(layers, width, height, &mut |data: &RasterData| {
                 upload_raster(renderer, data)
             })
-            .scene
         };
+        // A failed vector tessellation drops a drawing entirely: surface it
+        // instead of rendering a silently incomplete frame. (Raster uploads
+        // resolve through the live renderer here, so `skipped_raster` stays 0
+        // on this path; only the GPU-less `layers_to_scene` counts those.)
+        if built.skipped_tess > 0 {
+            return Err(RenderError::BackendError(format!(
+                "repose backend dropped {} vector layer(s): tessellation failed",
+                built.skipped_tess
+            )));
+        }
+        let scene = built.scene;
         offscreen.render_rgba(&scene, None).map_err(|e| {
             RenderError::BackendError(format!("repose offscreen render failed: {e:#}"))
         })
@@ -271,11 +287,37 @@ struct TextPass<'a> {
     text: &'a str,
     rect: Rect,
     color: [u8; 4],
+    font_family: &'a str,
     font_size: f32,
     spacing: f32,
     weight: FontWeight,
     style: FontStyle,
     decoration: TextDecoration,
+}
+
+/// Process-lifetime interner for font family names.
+///
+/// `SceneNode::Text::font_family` is `Option<&'static str>` while the
+/// pipeline hands us an owned `String` per layer. Family names are small and
+/// few (one per script style), so interning each distinct name once is
+/// bounded. Repose resolves families against system fonts best-effort, so
+/// passing the resolved name through (instead of `None`) is what selects
+/// the right face; an empty name keeps the framework default.
+fn intern_font_family(name: &str) -> Option<&'static str> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    if name.is_empty() {
+        return None;
+    }
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("font family interner lock");
+    if let Some(hit) = guard.get(name) {
+        return Some(*hit);
+    }
+    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    guard.insert(name.to_owned(), leaked);
+    Some(leaked)
 }
 
 /// Outline colour plus width in pixels.
@@ -290,7 +332,7 @@ fn text_node(pass: &TextPass<'_>, draw_style: DrawStyle) -> SceneNode {
         text: Arc::from(pass.text),
         color: Color::from_rgba(pass.color[0], pass.color[1], pass.color[2], pass.color[3]),
         size: Px(pass.font_size.max(1.0)),
-        font_family: None,
+        font_family: intern_font_family(pass.font_family),
         text_align: TextAlign::Unspecified,
         font_weight: pass.weight,
         font_style: pass.style,
@@ -306,26 +348,65 @@ fn text_node(pass: &TextPass<'_>, draw_style: DrawStyle) -> SceneNode {
     }
 }
 
+/// Emit the stroke-under-fill outline for `pass`, if any.
+///
+/// `\be` (edge blur) wraps just this stroke in its own blur layer so the
+/// fill stays sharp, mirroring the software reference where edge blur
+/// applies to the outline only. Full `\blur` is handled by the caller via
+/// the whole-run layer and must not be passed here.
+fn emit_outline_pass(
+    nodes: &mut Vec<SceneNode>,
+    layers_ctx: &mut LayerCtx,
+    pass: &TextPass<'_>,
+    outline: Option<OutlineSpec>,
+    edge_blur: Option<f32>,
+) {
+    let Some((outline_color, outline_width)) = outline else {
+        return;
+    };
+    let em = (outline_width / pass.font_size.max(1.0)).clamp(0.01, 0.5);
+    let stroke = text_node(
+        &TextPass {
+            color: outline_color,
+            decoration: TextDecoration::default(),
+            ..*pass
+        },
+        DrawStyle::Stroke {
+            width: em,
+            cap: StrokeCap::Round,
+            join: StrokeJoin::Round,
+            miter: 4.0,
+            path_effect: None,
+        },
+    );
+    match edge_blur.filter(|r| *r > 0.0) {
+        Some(radius) => {
+            let id = layers_ctx.alloc();
+            nodes.push(SceneNode::BeginLayer {
+                rect: pass.rect,
+                layer_id: id,
+                alpha: 1.0,
+                blur_radius_x: Px(radius),
+                blur_radius_y: Px(radius),
+                rectangle_edge: true,
+            });
+            nodes.push(stroke);
+            nodes.push(SceneNode::EndLayer { layer_id: id });
+        }
+        None => nodes.push(stroke),
+    }
+}
+
 /// Emit one fill pass of `pass`, honouring the outline effect as a
 /// stroke-under-fill double emit.
-fn emit_fill_pass(nodes: &mut Vec<SceneNode>, pass: &TextPass<'_>, outline: Option<OutlineSpec>) {
-    if let Some((outline_color, outline_width)) = outline {
-        let em = (outline_width / pass.font_size.max(1.0)).clamp(0.01, 0.5);
-        nodes.push(text_node(
-            &TextPass {
-                color: outline_color,
-                decoration: TextDecoration::default(),
-                ..*pass
-            },
-            DrawStyle::Stroke {
-                width: em,
-                cap: StrokeCap::Round,
-                join: StrokeJoin::Round,
-                miter: 4.0,
-                path_effect: None,
-            },
-        ));
-    }
+fn emit_fill_pass(
+    nodes: &mut Vec<SceneNode>,
+    layers_ctx: &mut LayerCtx,
+    pass: &TextPass<'_>,
+    outline: Option<OutlineSpec>,
+    edge_blur: Option<f32>,
+) {
+    emit_outline_pass(nodes, layers_ctx, pass, outline, edge_blur);
     nodes.push(text_node(pass, DrawStyle::Fill));
 }
 
@@ -336,8 +417,15 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
     let mut decoration = TextDecoration::default();
     let mut outline: Option<OutlineSpec> = None;
     let mut shadow: Option<([u8; 4], f32, f32)> = None;
+    // Full-run `\blur`: wraps fill, outline and shadow in one blur layer,
+    // like the software reference's blur temp.
     let mut blur: Option<f32> = None;
-    let mut karaoke: Option<(f32, [u8; 4])> = None;
+    // Edge-only `\be`: blurs just the outline stroke (see
+    // [`emit_outline_pass`]), never merged into `blur`.
+    let mut edge_blur: Option<f32> = None;
+    // `(progress, karaoke style 0-3, unsung colour)`. Style 0 (`\k`) flips
+    // the whole run; styles 1-3 sweep, like the software reference.
+    let mut karaoke: Option<(f32, u8, [u8; 4])> = None;
     let mut rotation: Option<RotationSpec> = None;
     let mut scale: Option<(f32, f32)> = None;
     // Accumulated (shear_x, shear_y): `\fax`/`\fay` plus the software
@@ -352,19 +440,29 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
             TextEffect::Italic => style = FontStyle::Italic,
             TextEffect::Underline => decoration.underline = true,
             TextEffect::Strikethrough => decoration.strikethrough = true,
-            TextEffect::Outline { color, width } => outline = Some((*color, *width)),
+            TextEffect::Outline {
+                color,
+                width_x,
+                width_y,
+            } => {
+                // Uniform stroke until anisotropic outlines land; both axes
+                // stay preserved in the IR (see `TextEffect::Outline`).
+                outline = Some((*color, width_x.max(*width_y)));
+            }
             TextEffect::Shadow {
                 color,
                 x_offset,
                 y_offset,
             } => shadow = Some((*color, *x_offset, *y_offset)),
             TextEffect::Blur { radius } => blur = Some(blur.unwrap_or(0.0).max(*radius)),
-            TextEffect::EdgeBlur { radius } => blur = Some(blur.unwrap_or(0.0).max(*radius)),
+            TextEffect::EdgeBlur { radius } => {
+                edge_blur = Some(edge_blur.unwrap_or(0.0).max(*radius));
+            }
             TextEffect::Karaoke {
                 progress,
+                style,
                 secondary,
-                ..
-            } => karaoke = Some((progress.clamp(0.0, 1.0), *secondary)),
+            } => karaoke = Some((progress.clamp(0.0, 1.0), *style, *secondary)),
             TextEffect::Rotation { x, y, z, origin } => {
                 // No true perspective in the scene graph: fold `\frx`/`\fry`
                 // into shear with the software reference's approximation
@@ -384,7 +482,10 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
                 s.0 += *x;
                 s.1 += *y;
             }
-            TextEffect::Scale { x, y } => scale = Some((*x, *y)),
+            // ASS scale tags are percentages (`\fscx150` → 150.0) while
+            // Repose takes multipliers. Y is already baked into `font_size`
+            // during shaping, so only X is applied here.
+            TextEffect::Scale { x, .. } => scale = Some((*x / 100.0, 1.0)),
             TextEffect::Clip {
                 x1,
                 y1,
@@ -401,6 +502,7 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
         text: &data.text,
         rect,
         color: data.color,
+        font_family: &data.font_family,
         font_size: data.font_size,
         spacing: data.spacing,
         weight,
@@ -434,9 +536,12 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
         let rotate = -z_deg.to_radians();
         let (shear_x, shear_y) = shear.unwrap_or((0.0, 0.0));
         let (origin_x, origin_y) = origin.map_or((0.5, 0.5), |(ox, oy)| {
+            // Normalized pivot, deliberately NOT clamped: a distant `\org`
+            // (rotation lever) must keep its true position. Repose applies
+            // the pivot in rect space, which is valid for any finite value.
             (
-                ((ox - rect.x) / rect.w.max(1.0)).clamp(0.0, 1.0),
-                ((oy - rect.y) / rect.h.max(1.0)).clamp(0.0, 1.0),
+                (ox - rect.x) / rect.w.max(1.0),
+                (oy - rect.y) / rect.h.max(1.0),
             )
         });
         nodes.push(SceneNode::PushTransform {
@@ -454,8 +559,9 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
         });
     }
 
-    // Blur wraps the whole run in an offscreen layer (approximation of the
-    // reference's per-glyph blur temps).
+    // Full `\blur` wraps the whole run (fill, outline, shadow) in an
+    // offscreen layer, like the reference's blur temp. `\be` is handled
+    // per-outline inside `emit_fill_pass` and never reaches this layer.
     let layer_id = blur.filter(|r| *r > 0.0).map(|radius| {
         let id = layers_ctx.alloc();
         nodes.push(SceneNode::BeginLayer {
@@ -494,33 +600,49 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
             decoration: TextDecoration::default(),
             ..base
         };
-        emit_fill_pass(nodes, &shadow_pass, outline);
+        emit_fill_pass(nodes, layers_ctx, &shadow_pass, outline, edge_blur);
     }
 
-    if let Some((progress, secondary)) = karaoke {
-        // Unsung base in the secondary colour, then a clipped window of the
-        // sung colour sweeping left to right.
-        let unsung = TextPass {
-            color: secondary,
-            ..base
-        };
-        emit_fill_pass(nodes, &unsung, outline);
-        if progress > 0.0 {
-            nodes.push(SceneNode::PushClip {
-                rect: Rect {
-                    x: rect.x,
-                    y: rect.y,
-                    w: rect.w * progress,
-                    h: rect.h,
-                },
-                radius: [Px::ZERO; 4],
-                op: ClipOp::Intersect,
-            });
-            emit_fill_pass(nodes, &base, outline);
-            nodes.push(SceneNode::PopClip);
+    if let Some((progress, style, secondary)) = karaoke {
+        if style == 0 {
+            // Basic `\k`: the whole run flips between sung and unsung at
+            // progress > 0, exactly like the software reference — no sweep
+            // window, which is reserved for styles 1-3 below.
+            let sung = if progress > 0.0 {
+                base
+            } else {
+                TextPass {
+                    color: secondary,
+                    ..base
+                }
+            };
+            emit_fill_pass(nodes, layers_ctx, &sung, outline, edge_blur);
+        } else {
+            // Swept styles (`\K`, `\kf`, `\ko`): unsung base in the
+            // secondary colour, then a clipped window of the sung colour
+            // sweeping left to right.
+            let unsung = TextPass {
+                color: secondary,
+                ..base
+            };
+            emit_fill_pass(nodes, layers_ctx, &unsung, outline, edge_blur);
+            if progress > 0.0 {
+                nodes.push(SceneNode::PushClip {
+                    rect: Rect {
+                        x: rect.x,
+                        y: rect.y,
+                        w: rect.w * progress,
+                        h: rect.h,
+                    },
+                    radius: [Px::ZERO; 4],
+                    op: ClipOp::Intersect,
+                });
+                emit_fill_pass(nodes, layers_ctx, &base, outline, edge_blur);
+                nodes.push(SceneNode::PopClip);
+            }
         }
     } else {
-        emit_fill_pass(nodes, &base, outline);
+        emit_fill_pass(nodes, layers_ctx, &base, outline, edge_blur);
     }
 
     if let Some(id) = layer_id {
@@ -602,52 +724,64 @@ fn emit_vector(out: &mut BuiltScene, data: &VectorData) -> bool {
     }
     let lyon_path = builder.build();
 
-    let color = premult_linear(data.color);
-    let mut buffers: lyon_tessellation::VertexBuffers<[f32; 2], u32> =
-        lyon_tessellation::VertexBuffers::new();
-    let ok = if let Some(stroke) = &data.stroke {
-        let options = StrokeOptions::tolerance(0.5).with_line_width(stroke.width.max(0.5));
-        StrokeTessellator::new()
-            .tessellate(
-                &lyon_path,
-                &options,
-                &mut BuffersBuilder::new(&mut buffers, |v: lyon_tessellation::StrokeVertex| {
-                    v.position().to_array()
-                }),
-            )
-            .is_ok()
-    } else {
-        FillTessellator::new()
-            .tessellate(
-                &lyon_path,
-                &FillOptions::tolerance(0.5),
-                &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array()),
-            )
-            .is_ok()
-    };
-    if !ok || buffers.indices.is_empty() {
-        return false;
+    // libass drawings are filled AND stroked (when a border is set), so emit
+    // one mesh per pass instead of choosing stroke *instead of* fill. Each
+    // pass carries its own colour: `data.color` for the fill, `stroke.color`
+    // for the stroke (previously ignored).
+    let mut passes: Vec<([f32; 4], bool)> = vec![(premult_linear(data.color), false)];
+    if let Some(stroke) = &data.stroke {
+        passes.push((premult_linear(stroke.color), true));
     }
-    let vertices: Arc<[VectorVertex]> = buffers
-        .vertices
-        .iter()
-        .map(|pos| VectorVertex {
-            pos: *pos,
-            color,
-            uv: [0.0, 0.0],
-        })
-        .collect();
-    out.scene.nodes.push(SceneNode::VectorMesh {
-        mesh: Arc::new(VectorMeshData {
-            vertices,
-            indices: buffers.indices.into(),
-        }),
-        transform: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-        paint: PaintDesc::Solid,
-        clip: None,
-        blend: BlendMode::Alpha,
-    });
-    true
+    let mut emitted = 0;
+    for (color, is_stroke) in passes {
+        let mut buffers: lyon_tessellation::VertexBuffers<[f32; 2], u32> =
+            lyon_tessellation::VertexBuffers::new();
+        let ok = if is_stroke {
+            let width = data.stroke.as_ref().map_or(0.5, |s| s.width.max(0.5));
+            let options = StrokeOptions::tolerance(0.5).with_line_width(width);
+            StrokeTessellator::new()
+                .tessellate(
+                    &lyon_path,
+                    &options,
+                    &mut BuffersBuilder::new(&mut buffers, |v: lyon_tessellation::StrokeVertex| {
+                        v.position().to_array()
+                    }),
+                )
+                .is_ok()
+        } else {
+            FillTessellator::new()
+                .tessellate(
+                    &lyon_path,
+                    &FillOptions::tolerance(0.5),
+                    &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array()),
+                )
+                .is_ok()
+        };
+        if !ok || buffers.indices.is_empty() {
+            return false;
+        }
+        let vertices: Arc<[VectorVertex]> = buffers
+            .vertices
+            .iter()
+            .map(|pos| VectorVertex {
+                pos: *pos,
+                color,
+                uv: [0.0, 0.0],
+            })
+            .collect();
+        out.scene.nodes.push(SceneNode::VectorMesh {
+            mesh: Arc::new(VectorMeshData {
+                vertices,
+                indices: buffers.indices.into(),
+            }),
+            transform: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            paint: PaintDesc::Solid,
+            clip: None,
+            blend: BlendMode::Alpha,
+        });
+        emitted += 1;
+    }
+    emitted > 0
 }
 
 /// How much of the frame the reference software backend covered.

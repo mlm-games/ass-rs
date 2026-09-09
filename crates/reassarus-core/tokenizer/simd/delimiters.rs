@@ -54,12 +54,10 @@ fn scan_delimiters_simd_impl(bytes: &[u8]) -> Option<usize> {
     let delim_newline = u8x16::splat(b'\n');
     let delim_carriage = u8x16::splat(b'\r');
 
-    let chunks = bytes.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = bytes.as_chunks::<16>();
 
-    for (chunk_idx, chunk) in chunks.enumerate() {
-        let chunk_array: [u8; 16] = chunk.try_into().unwrap();
-        let simd_chunk = u8x16::from(chunk_array);
+    for (chunk_idx, chunk) in chunks.iter().enumerate() {
+        let simd_chunk = u8x16::from(*chunk);
 
         let mask = simd_chunk.cmp_eq(delim_colon)
             | simd_chunk.cmp_eq(delim_comma)

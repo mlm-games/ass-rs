@@ -54,12 +54,10 @@ fn parse_hex_simd_impl(hex_str: &str) -> Option<u32> {
     }
 
     // For longer strings, validate with SIMD then fall back to scalar
-    let chunks = bytes.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = bytes.as_chunks::<16>();
 
     for chunk in chunks {
-        let chunk_array: [u8; 16] = chunk.try_into().unwrap();
-        let simd_chunk = u8x16::from(chunk_array);
+        let simd_chunk = u8x16::from(*chunk);
 
         if !validate_hex_chars_simd(simd_chunk) {
             return None;

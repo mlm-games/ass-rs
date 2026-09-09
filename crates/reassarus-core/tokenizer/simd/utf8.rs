@@ -30,12 +30,10 @@ pub fn validate_utf8_batch(bytes: &[u8]) -> Result<(), CoreError> {
 /// SIMD implementation for UTF-8 validation
 #[cfg(feature = "simd")]
 fn validate_utf8_simd_impl(bytes: &[u8]) -> Result<(), CoreError> {
-    let chunks = bytes.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = bytes.as_chunks::<16>();
 
     for chunk in chunks {
-        let chunk_array: [u8; 16] = chunk.try_into().unwrap();
-        let simd_chunk = u8x16::from(chunk_array);
+        let simd_chunk = u8x16::from(*chunk);
         let ascii_mask = u8x16::splat(0x80);
 
         let has_non_ascii = (simd_chunk & ascii_mask).move_mask();
