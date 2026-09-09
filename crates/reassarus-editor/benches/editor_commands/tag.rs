@@ -1,9 +1,9 @@
 //! Benchmarks for tag command operations.
 
+use criterion::{black_box, Criterion};
 use reassarus_editor::commands::{InsertTagCommand, RemoveTagCommand, ReplaceTagCommand};
 use reassarus_editor::core::{EditorDocument, Position, Range};
 use reassarus_editor::EditorCommand;
-use criterion::{black_box, Criterion};
 
 use crate::common::generate_complex_script;
 

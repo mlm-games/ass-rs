@@ -14,11 +14,11 @@
 //! `--time` is in centiseconds. Uses system fonts on both sides by default so
 //! results line up with the ffmpeg harness; pass `--fonts-dir` for a pinned set.
 
+use image::RgbImage;
 use reassarus_core::parser::Script;
 use reassarus_renderer::backends::BackendType;
 use reassarus_renderer::debug::libass::{Libass, LibassRect};
 use reassarus_renderer::renderer::{RenderContext, Renderer};
-use image::RgbImage;
 use std::path::PathBuf;
 
 struct Config {

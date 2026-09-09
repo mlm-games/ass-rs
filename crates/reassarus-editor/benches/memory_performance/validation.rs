@@ -1,8 +1,8 @@
 //! Benchmarks for basic and comprehensive validation on large documents.
 
 use crate::common::generate_large_script;
-use reassarus_editor::core::EditorDocument;
 use criterion::{black_box, BenchmarkId, Criterion};
+use reassarus_editor::core::EditorDocument;
 
 /// Benchmark validation on large documents
 pub fn bench_large_validation(c: &mut Criterion) {

@@ -1,12 +1,12 @@
 //! Benchmarks for batched style and tag operations on large documents.
 
 use crate::common::generate_large_script;
+use criterion::{black_box, Criterion};
 use reassarus_editor::commands::{
     BatchCommand, EditStyleCommand, EditorCommand, InsertTagCommand, RemoveTagCommand,
     ReplaceTagCommand,
 };
 use reassarus_editor::core::{EditorDocument, Position, Range};
-use criterion::{black_box, Criterion};
 
 /// Benchmark batch operations on large documents
 pub fn bench_batch_large_ops(c: &mut Criterion) {

@@ -5,8 +5,8 @@
 //! classification, and core-error extraction).
 
 use super::EditorError;
-use reassarus_core::utils::errors::CoreError;
 use core::fmt;
+use reassarus_core::utils::errors::CoreError;
 
 #[cfg(not(feature = "std"))]
 use alloc::string::ToString;

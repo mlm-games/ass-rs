@@ -1,11 +1,11 @@
 //! Memory usage and UU-decoding benchmark functions for `parser_benchmarks`.
 
+use criterion::{black_box, BenchmarkId, Criterion};
 use reassarus_core::{
     analysis::events::dialogue_info::DialogueInfo,
     parser::{Script, Section},
     utils::ScriptGenerator,
 };
-use criterion::{black_box, BenchmarkId, Criterion};
 use std::hint::black_box as std_black_box;
 
 /// Benchmark memory usage patterns
@@ -96,15 +96,30 @@ pub fn bench_uu_decoding(c: &mut Criterion) {
         .collect();
 
     group.bench_function("small_uu_decode", |b| {
-        b.iter(|| black_box(reassarus_core::utils::decode_uu_data(small_data.iter().copied())).unwrap());
+        b.iter(|| {
+            black_box(reassarus_core::utils::decode_uu_data(
+                small_data.iter().copied(),
+            ))
+            .unwrap()
+        });
     });
 
     group.bench_function("medium_uu_decode", |b| {
-        b.iter(|| black_box(reassarus_core::utils::decode_uu_data(medium_data.iter().copied())).unwrap());
+        b.iter(|| {
+            black_box(reassarus_core::utils::decode_uu_data(
+                medium_data.iter().copied(),
+            ))
+            .unwrap()
+        });
     });
 
     group.bench_function("large_uu_decode", |b| {
-        b.iter(|| black_box(reassarus_core::utils::decode_uu_data(large_data.iter().copied())).unwrap());
+        b.iter(|| {
+            black_box(reassarus_core::utils::decode_uu_data(
+                large_data.iter().copied(),
+            ))
+            .unwrap()
+        });
     });
 
     group.finish();

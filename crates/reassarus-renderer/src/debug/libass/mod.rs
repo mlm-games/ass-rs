@@ -58,7 +58,9 @@ impl Libass {
             let renderer = sys::reassarus_renderer_init(library);
             if renderer.is_null() {
                 sys::ass_library_done(library);
-                return Err(RenderError::BackendError("reassarus_renderer_init failed".into()));
+                return Err(RenderError::BackendError(
+                    "reassarus_renderer_init failed".into(),
+                ));
             }
             sys::ass_set_frame_size(renderer, width as c_int, height as c_int);
             sys::ass_set_storage_size(renderer, width as c_int, height as c_int);

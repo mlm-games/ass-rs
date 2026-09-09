@@ -1,11 +1,11 @@
 //! Benchmarks for batch command execution.
 
+use criterion::{black_box, BenchmarkId, Criterion};
 use reassarus_editor::commands::{
     BatchCommand, EditStyleCommand, InsertTagCommand, InsertTextCommand, TimingAdjustCommand,
 };
 use reassarus_editor::core::{EditorDocument, Position};
 use reassarus_editor::EditorCommand;
-use criterion::{black_box, BenchmarkId, Criterion};
 
 use crate::common::generate_complex_script;
 

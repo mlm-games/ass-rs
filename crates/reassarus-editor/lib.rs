@@ -157,7 +157,9 @@ pub mod sessions;
 pub mod formats;
 
 // Re-export reassarus-core types as first-class citizens
-pub use reassarus_core::parser::ast::{Event, EventType, ScriptInfo, Section, SectionType, Span, Style};
+pub use reassarus_core::parser::ast::{
+    Event, EventType, ScriptInfo, Section, SectionType, Span, Style,
+};
 pub use reassarus_core::parser::Script;
 
 // Public API exports

@@ -95,7 +95,10 @@ impl EditorSessionManager {
 
     /// Set shared extension registry
     #[cfg(feature = "plugins")]
-    pub fn set_extension_registry(&mut self, registry: Arc<reassarus_core::plugin::ExtensionRegistry>) {
+    pub fn set_extension_registry(
+        &mut self,
+        registry: Arc<reassarus_core::plugin::ExtensionRegistry>,
+    ) {
         self.with_inner_mut(|inner| {
             inner.extension_registry = Some(registry);
         });

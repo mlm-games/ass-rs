@@ -13,11 +13,11 @@ use crate::core::errors::EditorError;
 #[cfg(feature = "stream")]
 use crate::core::position::Position;
 #[cfg(feature = "stream")]
+use core::ops::Range as StdRange;
+#[cfg(feature = "stream")]
 use reassarus_core::parser::script::ScriptDeltaOwned;
 #[cfg(feature = "stream")]
 use reassarus_core::parser::Script;
-#[cfg(feature = "stream")]
-use core::ops::Range as StdRange;
 
 #[cfg(all(feature = "stream", not(feature = "std")))]
 use alloc::format;

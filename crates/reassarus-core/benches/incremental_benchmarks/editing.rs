@@ -5,8 +5,8 @@
 
 #[cfg(not(feature = "std"))]
 use alloc::string::ToString;
-use reassarus_core::utils::ScriptGenerator;
 use criterion::{black_box, BenchmarkId, Criterion};
+use reassarus_core::utils::ScriptGenerator;
 use std::{hint::black_box as std_black_box, time::Instant};
 
 use crate::{

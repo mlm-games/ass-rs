@@ -1,9 +1,9 @@
 //! Benchmarks for command execution with undo/redo.
 
+use criterion::{black_box, Criterion};
 use reassarus_editor::commands::{CreateStyleCommand, InsertTextCommand};
 use reassarus_editor::core::{EditorDocument, Position, StyleBuilder};
 use reassarus_editor::EditorCommand;
-use criterion::{black_box, Criterion};
 
 use crate::common::generate_complex_script;
 

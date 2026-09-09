@@ -1,11 +1,11 @@
 //! Benchmark search result retrieval with varying result limits.
 
 use crate::common::generate_search_script;
+use criterion::{black_box, Criterion};
 use reassarus_editor::{
     core::EditorDocument,
     utils::search::{DocumentSearch, DocumentSearchImpl, SearchOptions, SearchScope},
 };
-use criterion::{black_box, Criterion};
 
 /// Benchmark search result retrieval
 pub fn bench_result_retrieval(c: &mut Criterion) {

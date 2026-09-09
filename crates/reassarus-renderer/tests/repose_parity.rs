@@ -16,8 +16,8 @@
 #![cfg(all(feature = "repose-backend", feature = "software-backend"))]
 
 use reassarus_core::parser::Script;
-use reassarus_renderer::backends::BackendType;
 use reassarus_renderer::backends::repose::{covered_pixels, layers_to_scene};
+use reassarus_renderer::backends::BackendType;
 use reassarus_renderer::pipeline::{IntermediateLayer, Pipeline, SoftwarePipeline};
 use reassarus_renderer::renderer::{EventSelector, RenderContext, Renderer};
 use repose_core::SceneNode;

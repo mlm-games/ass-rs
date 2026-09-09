@@ -1,7 +1,7 @@
 //! Font loading from ASS scripts including embedded fonts
 
-use reassarus_core::parser::Script;
 use fontdb::Database as FontDatabase;
+use reassarus_core::parser::Script;
 
 /// Lazily-loaded, process-wide system font database, shared via `Arc`.
 ///

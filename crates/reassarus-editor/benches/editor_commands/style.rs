@@ -1,11 +1,11 @@
 //! Benchmarks for style command operations.
 
+use criterion::{black_box, Criterion};
 use reassarus_editor::commands::{
     ApplyStyleCommand, CloneStyleCommand, CreateStyleCommand, EditStyleCommand,
 };
 use reassarus_editor::core::{EditorDocument, StyleBuilder};
 use reassarus_editor::EditorCommand;
-use criterion::{black_box, Criterion};
 
 use crate::common::generate_complex_script;
 

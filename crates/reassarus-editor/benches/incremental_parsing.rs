@@ -4,8 +4,8 @@
 //! - <1ms for single edit operations
 //! - <5ms for reparse after multiple edits
 
-use reassarus_editor::core::{EditorDocument, Position, Range};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use reassarus_editor::core::{EditorDocument, Position, Range};
 
 #[path = "incremental_parsing/script_gen.rs"]
 mod script_gen;

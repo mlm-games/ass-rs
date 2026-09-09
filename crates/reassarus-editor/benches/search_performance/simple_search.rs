@@ -1,11 +1,11 @@
 //! Benchmark simple text search (case sensitivity and whole-word matching).
 
 use crate::common::generate_search_script;
+use criterion::{black_box, BenchmarkId, Criterion};
 use reassarus_editor::{
     core::EditorDocument,
     utils::search::{DocumentSearch, DocumentSearchImpl, SearchOptions, SearchScope},
 };
-use criterion::{black_box, BenchmarkId, Criterion};
 
 /// Benchmark simple text search
 pub fn bench_simple_search(c: &mut Criterion) {

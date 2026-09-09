@@ -25,10 +25,10 @@ use crate::pipeline::{
 use crate::renderer::RenderContext;
 use crate::utils::{DirtyRegion, RenderError};
 use ahash::AHashMap;
+use fontdb::Database as FontDatabase;
 #[cfg(feature = "analysis-integration")]
 use reassarus_core::analysis::ScriptAnalysis;
 use reassarus_core::parser::{Event, Script, Style};
-use fontdb::Database as FontDatabase;
 use smallvec::SmallVec;
 use tiny_skia::Transform;
 

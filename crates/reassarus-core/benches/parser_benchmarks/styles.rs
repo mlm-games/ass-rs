@@ -1,8 +1,8 @@
 //! Style resolution and overlap detection benchmark functions for
 //! `parser_benchmarks`.
 
-use reassarus_core::utils::generate_overlapping_script;
 use criterion::{black_box, Criterion};
+use reassarus_core::utils::generate_overlapping_script;
 
 /// Benchmark style resolution and analysis performance
 pub fn bench_style_resolution(c: &mut Criterion) {
@@ -32,7 +32,8 @@ Dialogue: 0,0:00:15.00,0:00:20.00,Caption,,0,0,0,,Caption style text
 
     group.bench_function("style_validation", |b| {
         b.iter(|| {
-            let analysis = black_box(reassarus_core::analysis::ScriptAnalysis::analyze(&script)).unwrap();
+            let analysis =
+                black_box(reassarus_core::analysis::ScriptAnalysis::analyze(&script)).unwrap();
             let styles = analysis.resolved_styles();
             black_box(styles.len())
         });

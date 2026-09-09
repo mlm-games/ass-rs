@@ -537,12 +537,7 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
 /// sRGB bytes → premultiplied-linear vertex colour.
 fn premult_linear(color: [u8; 4]) -> [f32; 4] {
     let lin = Color::from_rgba(color[0], color[1], color[2], color[3]).to_linear();
-    [
-        lin[0] * lin[3],
-        lin[1] * lin[3],
-        lin[2] * lin[3],
-        lin[3],
-    ]
+    [lin[0] * lin[3], lin[1] * lin[3], lin[2] * lin[3], lin[3]]
 }
 
 /// Tessellate a `tiny-skia` path into a solid `VectorMesh`.
@@ -626,9 +621,7 @@ fn emit_vector(out: &mut BuiltScene, data: &VectorData) -> bool {
             .tessellate(
                 &lyon_path,
                 &FillOptions::tolerance(0.5),
-                &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| {
-                    v.position().to_array()
-                }),
+                &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array()),
             )
             .is_ok()
     };
@@ -660,5 +653,9 @@ fn emit_vector(out: &mut BuiltScene, data: &VectorData) -> bool {
 /// How much of the frame the reference software backend covered.
 #[must_use]
 pub fn covered_pixels(rgba: &[u8]) -> u64 {
-    rgba.as_chunks::<4>().0.iter().filter(|px| px[3] > 0).count() as u64
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count() as u64
 }

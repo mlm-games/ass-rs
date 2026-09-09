@@ -1,11 +1,11 @@
 //! Benchmark regex-based search patterns.
 
 use crate::common::generate_search_script;
+use criterion::{black_box, Criterion};
 use reassarus_editor::{
     core::EditorDocument,
     utils::search::{DocumentSearch, DocumentSearchImpl, SearchOptions, SearchScope},
 };
-use criterion::{black_box, Criterion};
 
 /// Benchmark regex search
 pub fn bench_regex_search(c: &mut Criterion) {

@@ -52,7 +52,8 @@ impl EditorDocument {
             Ok(f(&script))
         } else {
             // No registry, parse normally
-            let script = reassarus_core::parser::Script::parse(&content).map_err(EditorError::Core)?;
+            let script =
+                reassarus_core::parser::Script::parse(&content).map_err(EditorError::Core)?;
             Ok(f(&script))
         }
     }

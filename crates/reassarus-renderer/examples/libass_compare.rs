@@ -19,10 +19,10 @@
 //! `--size` should equal the script's `PlayResX`/`PlayResY` for a 1:1 compare.
 //! Both sides resolve fonts from the system set, so pin the same font on both.
 
+use image::{Rgb, RgbImage};
 use reassarus_core::parser::Script;
 use reassarus_renderer::backends::BackendType;
 use reassarus_renderer::renderer::{RenderContext, Renderer};
-use image::{Rgb, RgbImage};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

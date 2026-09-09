@@ -1,9 +1,9 @@
 //! Benchmarks for event command operations.
 
+use criterion::{black_box, Criterion};
 use reassarus_editor::commands::{MergeEventsCommand, SplitEventCommand, TimingAdjustCommand};
 use reassarus_editor::core::EditorDocument;
 use reassarus_editor::EditorCommand;
-use criterion::{black_box, Criterion};
 
 use crate::common::generate_complex_script;
 

@@ -5,8 +5,8 @@ use super::event_toggle_effect::{EventEffector, EventToggler};
 use super::{EventInfo, EventQuery, EventSortOptions, OwnedEvent};
 use crate::core::errors::EditorError;
 use crate::core::{Position, Range, Result};
-use reassarus_core::parser::ast::{Event, Section};
 use core::cmp::Ordering;
+use reassarus_core::parser::ast::{Event, Section};
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;

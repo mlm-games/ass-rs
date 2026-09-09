@@ -3,8 +3,8 @@
 //! Measures basic parse throughput across script sizes/complexities and a
 //! placeholder streaming scenario.
 
-use reassarus_core::{parser::Script, utils::ScriptGenerator};
 use criterion::{black_box, BenchmarkId, Criterion, Throughput};
+use reassarus_core::{parser::Script, utils::ScriptGenerator};
 use std::hint::black_box as std_black_box;
 
 /// Benchmark basic parsing performance
