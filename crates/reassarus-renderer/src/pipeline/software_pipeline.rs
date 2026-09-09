@@ -29,7 +29,6 @@ use fontdb::Database as FontDatabase;
 use reassarus_core::analysis::ScriptAnalysis;
 use reassarus_core::parser::{Event, Script, Style};
 use smallvec::SmallVec;
-use tiny_skia::Transform;
 
 /// Owned style for storing in pipeline
 #[derive(Clone)]
@@ -733,8 +732,11 @@ impl SoftwarePipeline {
                 (context.width() as f32 / 2.0, context.height() as f32 / 2.0)
             };
 
-            // Get path bounds to calculate proper alignment offset
-            let bounds = path.bounds();
+            // Get path bounds to calculate proper alignment offset.
+            // Conservative box (control points included); fall back to an
+            // empty origin box for degenerate paths.
+            let (left, top, right, bottom) =
+                crate::pipeline::drawing::path_bounds(&path).unwrap_or((0.0, 0.0, 0.0, 0.0));
 
             // Get alignment from tags or style (default to 5 = center)
             let alignment = tags
@@ -755,28 +757,29 @@ impl SoftwarePipeline {
 
                 // Horizontal alignment: 1,4,7 = left, 2,5,8 = center, 3,6,9 = right
                 let x_offset = match alignment % 3 {
-                    1 => -bounds.left(), // Left align: move left edge to pos
-                    2 => -(bounds.left() + bounds.right()) / 2.0, // Center align: move center to pos
-                    0 => -bounds.right(), // Right align: move right edge to pos
-                    _ => -(bounds.left() + bounds.right()) / 2.0, // Default center
+                    1 => -left, // Left align: move left edge to pos
+                    2 => -(left + right) / 2.0, // Center align: move center to pos
+                    0 => -right, // Right align: move right edge to pos
+                    _ => -(left + right) / 2.0, // Default center
                 };
 
                 // Vertical alignment: 1,2,3 = bottom, 4,5,6 = middle, 7,8,9 = top
                 let y_offset = match alignment {
-                    1..=3 => -bounds.bottom(), // Bottom align: move bottom edge to pos
-                    4..=6 => -(bounds.top() + bounds.bottom()) / 2.0, // Middle align: move center to pos
-                    7..=9 => -bounds.top(), // Top align: move top edge to pos
-                    _ => -(bounds.top() + bounds.bottom()) / 2.0, // Default middle
+                    1..=3 => -bottom, // Bottom align: move bottom edge to pos
+                    4..=6 => -(top + bottom) / 2.0, // Middle align: move center to pos
+                    7..=9 => -top, // Top align: move top edge to pos
+                    _ => -(top + bottom) / 2.0, // Default middle
                 };
 
                 (x_offset, y_offset)
             };
 
             // Apply transform to path with alignment offset
-            let transformed_path = path.transform(Transform::from_translate(
+            let transformed_path = crate::pipeline::drawing::translate_path(
+                &path,
                 x + align_x_offset,
                 y + align_y_offset,
-            ));
+            );
 
             return Ok(vec![IntermediateLayer::Vector(VectorData {
                 path: transformed_path,

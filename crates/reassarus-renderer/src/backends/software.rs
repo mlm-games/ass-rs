@@ -105,7 +105,10 @@ impl SoftwareBackend {
         paint.anti_alias = true;
         paint.blend_mode = tiny_skia::BlendMode::SourceOver;
 
-        if let Some(path) = &data.path {
+        // The IR holds lyon paths; rasterize via a skia copy.
+        let skia = data.path.as_ref().and_then(skia_path);
+
+        if let Some(path) = &skia {
             self.pixmap.fill_path(
                 path,
                 &paint,
@@ -128,7 +131,7 @@ impl SoftwareBackend {
                 ..Default::default()
             };
 
-            if let Some(path) = &data.path {
+            if let Some(path) = &skia {
                 self.pixmap
                     .stroke_path(path, &paint, &sk_stroke, Transform::identity(), None);
             }
@@ -390,6 +393,9 @@ impl SoftwareBackend {
             &self.font_database,
             data.spacing,
         )?;
+        // Glyph outlines come back as lyon IR paths; rasterize via skia
+        // copies (empty outlines convert to nothing and drop out here).
+        let paths: Vec<tiny_skia::Path> = paths.iter().filter_map(skia_path).collect();
 
         // Rasterize, cache and composite the coverage. Returns false only for
         // effects the coverage path does not handle, which fall through to the
@@ -409,19 +415,7 @@ impl SoftwareBackend {
                 let height = self.pixmap.height();
                 if let Some(mut mask) = tiny_skia::Mask::new(width, height) {
                     let mut builder = tiny_skia::PathBuilder::new();
-                    for seg in path.segments() {
-                        match seg {
-                            tiny_skia::PathSegment::MoveTo(p) => builder.move_to(p.x, p.y),
-                            tiny_skia::PathSegment::LineTo(p) => builder.line_to(p.x, p.y),
-                            tiny_skia::PathSegment::QuadTo(c, p) => {
-                                builder.quad_to(c.x, c.y, p.x, p.y);
-                            }
-                            tiny_skia::PathSegment::CubicTo(c1, c2, p) => {
-                                builder.cubic_to(c1.x, c1.y, c2.x, c2.y, p.x, p.y)
-                            }
-                            tiny_skia::PathSegment::Close => builder.close(),
-                        }
-                    }
+                    append_lyon_path(&mut builder, path);
                     let fill_rule = if *inverse {
                         builder.move_to(0.0, 0.0);
                         builder.line_to(width as f32, 0.0);
@@ -1244,6 +1238,42 @@ fn merge_transformed(paths: &[tiny_skia::Path], transform: Transform) -> Option<
         }
     }
     builder.finish()
+}
+
+/// Convert a lyon path (pipeline IR) into a tiny-skia path for rasterization.
+///
+/// Returns `None` for empty paths (which rasterize to nothing anyway).
+fn skia_path(path: &lyon_path::Path) -> Option<tiny_skia::Path> {
+    let mut builder = tiny_skia::PathBuilder::new();
+    append_lyon_path(&mut builder, path);
+    builder.finish()
+}
+
+/// Feed a lyon path's contours into a tiny-skia `PathBuilder`.
+///
+/// Used where the skia path needs more verbs afterwards (e.g. the fullscreen
+/// rectangle appended for inverse clips).
+fn append_lyon_path(builder: &mut tiny_skia::PathBuilder, path: &lyon_path::Path) {
+    use lyon_path::Event;
+    for evt in path.iter() {
+        match evt {
+            Event::Begin { at } => builder.move_to(at.x, at.y),
+            Event::Line { to, .. } => builder.line_to(to.x, to.y),
+            Event::Quadratic { ctrl, to, .. } => {
+                builder.quad_to(ctrl.x, ctrl.y, to.x, to.y);
+            }
+            Event::Cubic {
+                ctrl1, ctrl2, to, ..
+            } => builder.cubic_to(ctrl1.x, ctrl1.y, ctrl2.x, ctrl2.y, to.x, to.y),
+            // Open-ended contours close implicitly on `finish()`; only an
+            // explicit close needs a verb.
+            Event::End { close, .. } => {
+                if close {
+                    builder.close();
+                }
+            }
+        }
+    }
 }
 
 /// Apply a simple box blur to a pixmap

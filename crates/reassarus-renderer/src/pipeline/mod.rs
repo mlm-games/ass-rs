@@ -14,16 +14,21 @@ use std::{string::String, vec::Vec};
 
 pub mod animation;
 pub mod compositing;
+#[cfg(feature = "vector")]
 pub mod drawing;
 pub mod effects;
+#[cfg(feature = "shaping")]
 pub mod font_loader;
+#[cfg(feature = "shaping")]
 pub mod shaping;
 pub mod tag_processor;
 pub mod text_segmenter;
 pub mod transform;
 pub mod validation;
 
+#[cfg(feature = "shaping")]
 mod software_pipeline;
+#[cfg(feature = "shaping")]
 pub use software_pipeline::SoftwarePipeline;
 
 /// Pipeline trait for processing events
@@ -166,8 +171,9 @@ pub struct RasterData {
 
 /// Vector graphics layer data
 pub struct VectorData {
-    /// Path to draw
-    pub path: Option<tiny_skia::Path>,
+    /// Path to draw (lyon path IR; only present with `vector`)
+    #[cfg(feature = "vector")]
+    pub path: Option<lyon_path::Path>,
     /// Fill color (RGBA)
     pub color: [u8; 4],
     /// Stroke information
@@ -293,8 +299,10 @@ pub enum TextEffect {
     },
     /// Vector (drawing) clip region (`\clip(m ...)`), in render coordinates.
     /// Backends tessellate/mask it directly; `inverse` is `\iclip`.
+    /// Only present with `vector` (lyon path IR).
+    #[cfg(feature = "vector")]
     VectorClip {
-        path: tiny_skia::Path,
+        path: lyon_path::Path,
         inverse: bool,
     },
     /// Opaque box behind the text (`BorderStyle: 3`), drawn in the outline

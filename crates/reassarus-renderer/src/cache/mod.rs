@@ -1,17 +1,21 @@
 //! Caching system for expensive operations
 
+#[cfg(feature = "shaping")]
 use crate::pipeline::shaping::ShapedText;
-use tiny_skia::Path;
+#[cfg(feature = "vector")]
+use lyon_path::Path;
 
-#[cfg(not(feature = "nostd"))]
+#[cfg(all(not(feature = "nostd"), any(feature = "shaping", feature = "vector")))]
 use std::collections::HashMap;
-#[cfg(not(feature = "nostd"))]
+#[cfg(all(not(feature = "nostd"), feature = "shaping"))]
 use std::sync::Arc;
 
-#[cfg(feature = "nostd")]
+#[cfg(all(feature = "nostd", any(feature = "shaping", feature = "vector")))]
 use alloc::collections::BTreeMap as HashMap;
 #[cfg(feature = "nostd")]
-use alloc::{string::String, sync::Arc};
+use alloc::string::String;
+#[cfg(all(feature = "nostd", feature = "shaping"))]
+use alloc::sync::Arc;
 
 /// Cache key for shaped text
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
@@ -37,12 +41,16 @@ pub struct DrawingCacheKey {
 
 /// Render cache for expensive operations
 pub struct RenderCache {
-    /// Cache for shaped text
+    /// Cache for shaped text (only with `shaping`)
+    #[cfg(feature = "shaping")]
     shaped_text_cache: HashMap<TextCacheKey, Arc<ShapedText>>,
+    #[cfg(feature = "shaping")]
     max_shaped_entries: usize,
 
-    /// Cache for drawing paths
+    /// Cache for drawing paths (only with `vector`)
+    #[cfg(feature = "vector")]
     drawing_path_cache: HashMap<DrawingCacheKey, Option<Path>>,
+    #[cfg(feature = "vector")]
     max_drawing_entries: usize,
 
     /// Cache statistics
@@ -68,9 +76,13 @@ impl RenderCache {
     /// Create a new render cache
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "shaping")]
             shaped_text_cache: HashMap::new(),
+            #[cfg(feature = "shaping")]
             max_shaped_entries: 1000,
+            #[cfg(feature = "vector")]
             drawing_path_cache: HashMap::new(),
+            #[cfg(feature = "vector")]
             max_drawing_entries: 500,
             stats: CacheStats::default(),
         }
@@ -79,15 +91,20 @@ impl RenderCache {
     /// Create with custom limits
     pub fn with_limits(max_shaped: usize, max_drawing: usize) -> Self {
         Self {
+            #[cfg(feature = "shaping")]
             shaped_text_cache: HashMap::new(),
+            #[cfg(feature = "shaping")]
             max_shaped_entries: max_shaped,
+            #[cfg(feature = "vector")]
             drawing_path_cache: HashMap::new(),
+            #[cfg(feature = "vector")]
             max_drawing_entries: max_drawing,
             stats: CacheStats::default(),
         }
     }
 
     /// Get shaped text from cache
+    #[cfg(feature = "shaping")]
     pub fn get_shaped_text(&mut self, key: &TextCacheKey) -> Option<Arc<ShapedText>> {
         if let Some(shaped) = self.shaped_text_cache.get(key) {
             self.stats.text_hits += 1;
@@ -99,6 +116,7 @@ impl RenderCache {
     }
 
     /// Store shaped text in cache
+    #[cfg(feature = "shaping")]
     pub fn store_shaped_text(&mut self, key: TextCacheKey, shaped: ShapedText) -> Arc<ShapedText> {
         // Evict if at capacity
         if self.shaped_text_cache.len() >= self.max_shaped_entries {
@@ -115,6 +133,7 @@ impl RenderCache {
     }
 
     /// Get drawing path from cache
+    #[cfg(feature = "vector")]
     pub fn get_drawing_path(&mut self, key: &DrawingCacheKey) -> Option<Option<Path>> {
         if let Some(path) = self.drawing_path_cache.get(key) {
             self.stats.drawing_hits += 1;
@@ -126,6 +145,7 @@ impl RenderCache {
     }
 
     /// Store drawing path in cache
+    #[cfg(feature = "vector")]
     pub fn store_drawing_path(&mut self, key: DrawingCacheKey, path: Option<Path>) {
         // Evict if at capacity
         if self.drawing_path_cache.len() >= self.max_drawing_entries {
@@ -140,7 +160,9 @@ impl RenderCache {
 
     /// Clear all caches
     pub fn clear(&mut self) {
+        #[cfg(feature = "shaping")]
         self.shaped_text_cache.clear();
+        #[cfg(feature = "vector")]
         self.drawing_path_cache.clear();
         self.stats = CacheStats::default();
     }
@@ -152,14 +174,14 @@ impl RenderCache {
 
     /// Print cache statistics
     pub fn print_stats(&self) {
-        #[cfg(not(feature = "nostd"))]
+        #[cfg(all(not(feature = "nostd"), feature = "shaping"))]
         let text_ratio = if self.stats.text_hits + self.stats.text_misses > 0 {
             self.stats.text_hits as f64 / (self.stats.text_hits + self.stats.text_misses) as f64
         } else {
             0.0
         };
 
-        #[cfg(not(feature = "nostd"))]
+        #[cfg(all(not(feature = "nostd"), feature = "vector"))]
         let drawing_ratio = if self.stats.drawing_hits + self.stats.drawing_misses > 0 {
             self.stats.drawing_hits as f64
                 / (self.stats.drawing_hits + self.stats.drawing_misses) as f64
@@ -169,7 +191,7 @@ impl RenderCache {
 
         #[cfg(not(feature = "nostd"))]
         eprintln!("=== Cache Statistics ===");
-        #[cfg(not(feature = "nostd"))]
+        #[cfg(all(not(feature = "nostd"), feature = "shaping"))]
         eprintln!(
             "Text Cache: {} entries, {:.1}% hit rate ({}/{} hits)",
             self.shaped_text_cache.len(),
@@ -177,7 +199,7 @@ impl RenderCache {
             self.stats.text_hits,
             self.stats.text_hits + self.stats.text_misses
         );
-        #[cfg(not(feature = "nostd"))]
+        #[cfg(all(not(feature = "nostd"), feature = "vector"))]
         eprintln!(
             "Drawing Cache: {} entries, {:.1}% hit rate ({}/{} hits)",
             self.drawing_path_cache.len(),

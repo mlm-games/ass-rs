@@ -13,7 +13,97 @@ use std::{
 };
 
 use crate::utils::RenderError;
-use tiny_skia::{Path, PathBuilder};
+use lyon_path::{math::Point, Event, Path};
+
+/// Contour-tracking adapter over lyon's `begin`/`end` builder.
+///
+/// lyon has no `move_to`: contours are delimited by `begin`/`end`. This keeps
+/// the tiny-skia-style call sequence used by the drawing parser (and the
+/// glyph outline builder in `shaping`) while tracking open contours (and
+/// whether anything was emitted, so empty results stay `None` like before).
+pub(crate) struct ContourBuilder {
+    builder: lyon_path::path::Builder,
+    open: bool,
+    has_content: bool,
+}
+
+impl ContourBuilder {
+    pub(crate) fn new() -> Self {
+        Self {
+            builder: Path::builder(),
+            open: false,
+            has_content: false,
+        }
+    }
+
+    pub(crate) fn move_to(&mut self, x: f32, y: f32) {
+        if self.open {
+            self.builder.end(false);
+        }
+        self.builder.begin(Point::new(x, y));
+        self.open = true;
+        self.has_content = true;
+    }
+
+    pub(crate) fn line_to(&mut self, x: f32, y: f32) {
+        let to = Point::new(x, y);
+        if !self.open {
+            self.builder.begin(to);
+            self.open = true;
+        } else {
+            self.builder.line_to(to);
+        }
+        self.has_content = true;
+    }
+
+    pub(crate) fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) {
+        let (ctrl, to) = (Point::new(cx, cy), Point::new(x, y));
+        if !self.open {
+            // Degenerate leading edge: a contour must start somewhere, so
+            // begin at the control point, then emit the real segment below.
+            self.builder.begin(ctrl);
+            self.open = true;
+        }
+        self.builder.quadratic_bezier_to(ctrl, to);
+        self.has_content = true;
+    }
+
+    pub(crate) fn cubic_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        let (c1, c2, to) = (
+            Point::new(x1, y1),
+            Point::new(x2, y2),
+            Point::new(x, y),
+        );
+        if !self.open {
+            self.builder.begin(c1);
+            self.open = true;
+        }
+        self.builder.cubic_bezier_to(c1, c2, to);
+        self.has_content = true;
+    }
+
+    pub(crate) fn close(&mut self) {
+        if self.open {
+            self.builder.end(true);
+            self.open = false;
+        }
+    }
+
+    pub(crate) fn end_open(&mut self) {
+        if self.open {
+            self.builder.end(false);
+            self.open = false;
+        }
+    }
+
+    pub(crate) fn finish(mut self) -> Option<Path> {
+        self.end_open();
+        if !self.has_content {
+            return None;
+        }
+        Some(self.builder.build())
+    }
+}
 
 /// A bezier curve represented as three control points: start, control, end
 type BezierCurve = ((f32, f32), (f32, f32), (f32, f32));
@@ -56,7 +146,7 @@ pub fn process_drawing_commands(commands: &str) -> Result<Option<Path>, RenderEr
         return Ok(None);
     }
 
-    let mut builder = PathBuilder::new();
+    let mut builder = ContourBuilder::new();
     let mut _current_pos = (0.0, 0.0);
 
     for cmd in draw_commands {
@@ -116,26 +206,90 @@ pub fn process_drawing_commands(commands: &str) -> Result<Option<Path>, RenderEr
 /// Scale a path by `(sx, sy)` (e.g. script → render coordinates for
 /// drawing clips). Returns `None` for an empty result.
 pub fn scale_path(path: &Path, sx: f32, sy: f32) -> Option<Path> {
-    use tiny_skia::PathSegment;
-    let mut builder = PathBuilder::new();
-    let mut empty = true;
-    for seg in path.segments() {
-        empty = false;
-        match seg {
-            PathSegment::MoveTo(p) => builder.move_to(p.x * sx, p.y * sy),
-            PathSegment::LineTo(p) => builder.line_to(p.x * sx, p.y * sy),
-            PathSegment::QuadTo(c, p) => {
-                builder.quad_to(c.x * sx, c.y * sy, p.x * sx, p.y * sy);
+    remap_path(path, |p| Point::new(p.x * sx, p.y * sy))
+}
+
+/// Conservative bounds of a path as `(left, top, right, bottom)`.
+///
+/// Control points are included (like the rasterizer's view of the curves),
+/// so the box never under-covers. Returns `None` for an empty path.
+pub fn path_bounds(path: &Path) -> Option<(f32, f32, f32, f32)> {
+    let mut first = true;
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (0.0f32, 0.0, 0.0, 0.0);
+    let mut eat = |p: Point| {
+        if first {
+            (min_x, min_y, max_x, max_y) = (p.x, p.y, p.x, p.y);
+            first = false;
+        } else {
+            min_x = min_x.min(p.x);
+            min_y = min_y.min(p.y);
+            max_x = max_x.max(p.x);
+            max_y = max_y.max(p.y);
+        }
+    };
+    for evt in path.iter() {
+        match evt {
+            Event::Begin { at } => eat(at),
+            Event::Line { to, .. } => eat(to),
+            Event::Quadratic { ctrl, to, .. } => {
+                eat(ctrl);
+                eat(to);
             }
-            PathSegment::CubicTo(c1, c2, p) => builder.cubic_to(
-                c1.x * sx,
-                c1.y * sy,
-                c2.x * sx,
-                c2.y * sy,
-                p.x * sx,
-                p.y * sy,
-            ),
-            PathSegment::Close => builder.close(),
+            Event::Cubic {
+                ctrl1, ctrl2, to, ..
+            } => {
+                eat(ctrl1);
+                eat(ctrl2);
+                eat(to);
+            }
+            Event::End { .. } => {}
+        }
+    }
+    if first {
+        return None;
+    }
+    Some((min_x, min_y, max_x, max_y))
+}
+
+/// Translate a path by `(dx, dy)` (e.g. placing a cached glyph outline at
+/// its pen position). Returns `None` for an empty result.
+pub fn translate_path(path: &Path, dx: f32, dy: f32) -> Option<Path> {
+    remap_path(path, |p| Point::new(p.x + dx, p.y + dy))
+}
+
+/// Rebuild a path with every point mapped through `f`, preserving contour
+/// structure. Returns `None` for an empty result.
+fn remap_path(path: &Path, f: impl Fn(Point) -> Point) -> Option<Path> {
+    let mut builder = ContourBuilder::new();
+    let mut empty = true;
+    for evt in path.iter() {
+        empty = false;
+        match evt {
+            Event::Begin { at } => {
+                let to = f(at);
+                builder.move_to(to.x, to.y);
+            }
+            Event::Line { to, .. } => {
+                let to = f(to);
+                builder.line_to(to.x, to.y);
+            }
+            Event::Quadratic { ctrl, to, .. } => {
+                let (ctrl, to) = (f(ctrl), f(to));
+                builder.quad_to(ctrl.x, ctrl.y, to.x, to.y);
+            }
+            Event::Cubic {
+                ctrl1, ctrl2, to, ..
+            } => {
+                let (c1, c2, to) = (f(ctrl1), f(ctrl2), f(to));
+                builder.cubic_to(c1.x, c1.y, c2.x, c2.y, to.x, to.y);
+            }
+            Event::End { close, .. } => {
+                if close {
+                    builder.close();
+                } else {
+                    builder.end_open();
+                }
+            }
         }
     }
     if empty {

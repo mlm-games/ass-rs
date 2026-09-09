@@ -26,7 +26,9 @@ pub mod color_diagnostic;
 pub mod inspector;
 /// Debug player for subtitle playback
 pub mod player;
-/// Visual comparison utilities
+/// Visual comparison utilities (tiny-skia raster helpers; only with the
+/// software backend, the sole tiny-skia raster user)
+#[cfg(feature = "software-backend")]
 pub mod visual_comparison;
 
 /// Performance benchmarking tools

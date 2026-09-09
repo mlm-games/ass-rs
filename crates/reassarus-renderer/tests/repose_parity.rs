@@ -341,14 +341,14 @@ fn vector_stroke_emits_fill_and_stroke_passes() {
     use reassarus_renderer::pipeline::{StrokeInfo, VectorData};
     // Drawings are filled AND stroked: one mesh per pass, each in its own
     // colour (the stroke used to replace the fill and ignore its colour).
-    let mut builder = tiny_skia::PathBuilder::new();
-    builder.move_to(0.0, 0.0);
-    builder.line_to(60.0, 0.0);
-    builder.line_to(60.0, 60.0);
-    builder.line_to(0.0, 60.0);
-    builder.close();
+    let mut builder = lyon_path::Path::builder();
+    builder.begin(lyon_path::math::Point::new(0.0, 0.0));
+    builder.line_to(lyon_path::math::Point::new(60.0, 0.0));
+    builder.line_to(lyon_path::math::Point::new(60.0, 60.0));
+    builder.line_to(lyon_path::math::Point::new(0.0, 60.0));
+    builder.end(true);
     let layers = vec![IntermediateLayer::Vector(VectorData {
-        path: builder.finish(),
+        path: Some(builder.build()),
         color: [255, 0, 0, 255],
         stroke: Some(StrokeInfo {
             color: [0, 0, 255, 255],

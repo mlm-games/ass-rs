@@ -14,11 +14,11 @@ categories = ["multimedia::video", "graphics", "rendering"]
 # Core dependency
 reassarus-core.workspace = true
 
-# Text shaping and rendering
-rustybuzz.workspace = true
-tiny-skia.workspace = true
-fontdb.workspace = true
-ttf-parser.workspace = true
+# Text shaping (shared layout stage used by both backends) and vector-path IR.
+rustybuzz = { workspace = true, optional = true }
+tiny-skia = { workspace = true, optional = true }
+fontdb = { workspace = true, optional = true }
+ttf-parser = { workspace = true, optional = true }
 
 # Parallelization
 rayon = { workspace = true, optional = true }
@@ -72,18 +72,22 @@ full = [
 
 # Core features
 analysis-integration = ["reassarus-core/analysis"]
-software-backend = ["rayon"]
+software-backend = ["dep:rayon", "dep:tiny-skia", "shaping"]
 repose-backend = [
     "dep:repose-core",
     "dep:repose-render-wgpu",
     "dep:lyon_path",
     "dep:lyon_tessellation",
+    "shaping",
 ]
 backend-probing = []
 backend-metrics = []
 
+shaping = ["dep:fontdb", "dep:rustybuzz", "dep:ttf-parser", "vector"]
+vector = ["dep:lyon_path"]
+
 # Performance features
-simd = ["reassarus-core/simd", "tiny-skia/simd"]
+simd = ["reassarus-core/simd", "tiny-skia?/simd"]
 arena = ["bumpalo", "reassarus-core/arena"]
 
 # Serialization

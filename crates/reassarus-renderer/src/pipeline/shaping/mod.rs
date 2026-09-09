@@ -8,11 +8,12 @@ use alloc::{format, string::ToString, sync::Arc, vec::Vec};
 #[cfg(not(feature = "nostd"))]
 use std::{string::ToString, sync::Arc, vec::Vec};
 
+use crate::pipeline::drawing::ContourBuilder;
 use crate::utils::RenderError;
 use ahash::AHashMap;
 use fontdb::{Database as FontDatabase, ID as FontId};
+use lyon_path::Path;
 use rustybuzz::{Face, Feature, UnicodeBuffer, Variation};
-use tiny_skia::{Path, PathBuilder};
 
 /// Shaped glyph representation
 #[derive(Debug, Clone)]
@@ -641,11 +642,14 @@ impl GlyphRenderer {
 
             // Check cache first
             if let Some(cached_path) = self.glyph_cache.get(&key) {
-                // Transform cached path to glyph position
+                // Translate cached path to glyph position
                 // y_position is already the baseline position
-                let transform = tiny_skia::Transform::from_translate(adjusted_x, glyph.y_position);
-                if let Some(transformed) = cached_path.clone().transform(transform) {
-                    paths.push(transformed);
+                if let Some(translated) = crate::pipeline::drawing::translate_path(
+                    cached_path,
+                    adjusted_x,
+                    glyph.y_position,
+                ) {
+                    paths.push(translated);
                 }
                 // Add spacing for next glyph (spacing is added after each character)
                 if i < shaped.glyphs.len() - 1 {
@@ -655,16 +659,16 @@ impl GlyphRenderer {
             }
 
             // Build glyph path
-            let mut builder = PathBuilder::new();
+            let mut builder = ContourBuilder::new();
             let glyph_id = ttf_parser::GlyphId(glyph.glyph_id as u16);
 
             // Get glyph outline
             if let Some(_bbox) = font.glyph_bounding_box(glyph_id) {
                 let scale = shaped.font_size / font.units_per_em() as f32;
 
-                // Outline builder to convert ttf-parser outlines to tiny-skia paths
+                // Outline builder to convert ttf-parser outlines to lyon paths
                 struct OutlineBuilder {
-                    builder: PathBuilder,
+                    builder: ContourBuilder,
                     scale: f32,
                 }
 
@@ -711,11 +715,14 @@ impl GlyphRenderer {
                 // Cache the base glyph path
                 self.glyph_cache.insert(key, path.clone());
 
-                // Transform to position with spacing adjustment
+                // Translate to position with spacing adjustment
                 // y_position is already the baseline position
-                let transform = tiny_skia::Transform::from_translate(adjusted_x, glyph.y_position);
-                if let Some(transformed) = path.transform(transform) {
-                    paths.push(transformed);
+                if let Some(translated) = crate::pipeline::drawing::translate_path(
+                    &path,
+                    adjusted_x,
+                    glyph.y_position,
+                ) {
+                    paths.push(translated);
                 }
             }
 

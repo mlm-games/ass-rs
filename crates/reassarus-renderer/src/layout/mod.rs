@@ -103,6 +103,7 @@ pub struct TextMetrics {
 
 impl TextMetrics {
     /// Create from shaped text
+    #[cfg(feature = "shaping")]
     pub fn from_shaped(shaped: &crate::pipeline::shaping::ShapedText) -> Self {
         // ShapedText has width, height, and baseline
         // We'll estimate ascent/descent from height and baseline

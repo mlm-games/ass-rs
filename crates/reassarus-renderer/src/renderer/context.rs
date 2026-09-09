@@ -1,10 +1,11 @@
 //! Rendering context with fonts, resolution, and backend configuration
 
+#[cfg(feature = "shaping")]
 use fontdb::Database as FontDatabase;
 
-#[cfg(feature = "nostd")]
+#[cfg(all(feature = "shaping", feature = "nostd"))]
 use alloc::sync::Arc;
-#[cfg(not(feature = "nostd"))]
+#[cfg(all(feature = "shaping", not(feature = "nostd")))]
 use std::sync::Arc;
 
 /// Rendering context containing fonts, resolution, and configuration
@@ -12,6 +13,9 @@ use std::sync::Arc;
 pub struct RenderContext {
     width: u32,
     height: u32,
+    /// Shared font database (only with `shaping`; both backends shape text
+    /// through the shared layout stage)
+    #[cfg(feature = "shaping")]
     font_database: Arc<FontDatabase>,
     playback_res_x: u32,
     playback_res_y: u32,
@@ -24,12 +28,15 @@ pub struct RenderContext {
 impl RenderContext {
     /// Create a new render context with the given dimensions
     pub fn new(width: u32, height: u32) -> Self {
+        #[cfg(feature = "shaping")]
         let mut font_database = FontDatabase::new();
+        #[cfg(feature = "shaping")]
         font_database.load_system_fonts();
 
         Self {
             width,
             height,
+            #[cfg(feature = "shaping")]
             font_database: Arc::new(font_database),
             playback_res_x: width,
             playback_res_y: height,
@@ -41,6 +48,7 @@ impl RenderContext {
     }
 
     /// Create context with custom font database
+    #[cfg(feature = "shaping")]
     pub fn with_font_database(width: u32, height: u32, font_database: FontDatabase) -> Self {
         Self {
             width,
@@ -88,11 +96,13 @@ impl RenderContext {
     }
 
     /// Get font database
+    #[cfg(feature = "shaping")]
     pub fn font_database(&self) -> &FontDatabase {
         &self.font_database
     }
 
     /// Get mutable font database
+    #[cfg(feature = "shaping")]
     pub fn font_database_mut(&mut self) -> &mut FontDatabase {
         Arc::get_mut(&mut self.font_database).expect("Font database has multiple references")
     }

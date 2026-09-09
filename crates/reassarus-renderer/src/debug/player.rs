@@ -42,7 +42,13 @@ pub struct DebugPlayer {
 
 impl DebugPlayer {
     pub fn new(backend_type: BackendType, width: u32, height: u32) -> Result<Self, RenderError> {
+        #[cfg(feature = "shaping")]
         let mut context = RenderContext::new(width, height);
+        #[cfg(not(feature = "shaping"))]
+        let context = RenderContext::new(width, height);
+        // `RenderContext::new` already loads system fonts when `shaping` is
+        // on; reload here used to be a redundant second scan.
+        #[cfg(feature = "shaping")]
         context.font_database_mut().load_system_fonts();
 
         let renderer = Renderer::new(backend_type, context)?;

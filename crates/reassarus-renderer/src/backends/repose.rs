@@ -582,7 +582,7 @@ fn emit_text(out: &mut BuiltScene, layers_ctx: &mut LayerCtx, data: &TextData) {
     let mut clip: Option<(f32, f32, f32, f32, bool)> = None;
     // Tessellated drawing clip (`\clip(m ...)`), emitted as a stencil
     // `PushVectorClip` around the run.
-    let mut vclip: Option<(tiny_skia::Path, bool)> = None;
+    let mut vclip: Option<(lyon_path::Path, bool)> = None;
     let mut opaque: Option<([u8; 4], f32)> = None;
 
     for effect in data.effects.iter() {
@@ -891,17 +891,15 @@ fn premult_linear(color: [u8; 4]) -> [f32; 4] {
     [lin[0] * lin[3], lin[1] * lin[3], lin[2] * lin[3], lin[3]]
 }
 
-/// Tessellate a `tiny-skia` path into a solid `VectorMesh`.
-fn tessellate_fill_mesh(path: &tiny_skia::Path, color: [f32; 4]) -> Option<Arc<VectorMeshData>> {
+/// Tessellate a lyon path into a solid `VectorMesh`.
+fn tessellate_fill_mesh(path: &lyon_path::Path, color: [f32; 4]) -> Option<Arc<VectorMeshData>> {
     use lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex};
-
-    let lyon_path = lyon_from_skia(path);
 
     let mut buffers: lyon_tessellation::VertexBuffers<[f32; 2], u32> =
         lyon_tessellation::VertexBuffers::new();
     FillTessellator::new()
         .tessellate(
-            &lyon_path,
+            path,
             &FillOptions::tolerance(0.5),
             &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array()),
         )
@@ -924,7 +922,7 @@ fn tessellate_fill_mesh(path: &tiny_skia::Path, color: [f32; 4]) -> Option<Arc<V
     }))
 }
 
-/// Tessellate a `tiny-skia` path into `VectorMesh` nodes (fill + optional
+/// Tessellate a lyon path into `VectorMesh` nodes (fill + optional
 /// stroke) for a vector drawing layer.
 ///
 /// Returns `false` when there is no path or tessellation fails.
@@ -946,14 +944,13 @@ fn emit_vector(out: &mut BuiltScene, data: &VectorData) -> bool {
         return false;
     }
     if data.stroke.is_some() {
-        let lyon_path = lyon_from_skia(path);
         let width = data.stroke.as_ref().map_or(0.5, |s| s.width.max(0.5));
         let options = StrokeOptions::tolerance(0.5).with_line_width(width);
         let mut buffers: lyon_tessellation::VertexBuffers<[f32; 2], u32> =
             lyon_tessellation::VertexBuffers::new();
         let ok = StrokeTessellator::new()
             .tessellate(
-                &lyon_path,
+                path,
                 &options,
                 &mut BuffersBuilder::new(&mut buffers, |v: lyon_tessellation::StrokeVertex| {
                     v.position().to_array()
@@ -995,65 +992,6 @@ fn vector_mesh_node(mesh: Arc<VectorMeshData>) -> SceneNode {
         paint: PaintDesc::Solid,
         clip: None,
         blend: BlendMode::Alpha,
-    }
-}
-
-/// Convert a `tiny-skia` path's contours into a lyon path.
-fn lyon_from_skia(path: &tiny_skia::Path) -> lyon_path::Path {
-    let mut builder = lyon_path::Path::builder();
-    build_lyon_path(&mut builder, path);
-    builder.build()
-}
-
-/// Feed a `tiny-skia` path's contours into a lyon path builder.
-fn build_lyon_path(builder: &mut lyon_path::path::Builder, path: &tiny_skia::Path) {
-    use lyon_path::math::Point;
-    let mut open = false;
-    for seg in path.segments() {
-        match seg {
-            tiny_skia::PathSegment::MoveTo(p) => {
-                if open {
-                    builder.end(false);
-                }
-                builder.begin(Point::new(p.x, p.y));
-                open = true;
-            }
-            tiny_skia::PathSegment::LineTo(p) => {
-                if !open {
-                    builder.begin(Point::new(p.x, p.y));
-                    open = true;
-                } else {
-                    builder.line_to(Point::new(p.x, p.y));
-                }
-            }
-            tiny_skia::PathSegment::QuadTo(c, p) => {
-                if !open {
-                    builder.begin(Point::new(c.x, c.y));
-                    open = true;
-                }
-                builder.quadratic_bezier_to(Point::new(c.x, c.y), Point::new(p.x, p.y));
-            }
-            tiny_skia::PathSegment::CubicTo(c1, c2, p) => {
-                if !open {
-                    builder.begin(Point::new(c1.x, c1.y));
-                    open = true;
-                }
-                builder.cubic_bezier_to(
-                    Point::new(c1.x, c1.y),
-                    Point::new(c2.x, c2.y),
-                    Point::new(p.x, p.y),
-                );
-            }
-            tiny_skia::PathSegment::Close => {
-                if open {
-                    builder.end(true);
-                    open = false;
-                }
-            }
-        }
-    }
-    if open {
-        builder.end(false);
     }
 }
 
