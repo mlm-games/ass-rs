@@ -1,51 +1,52 @@
 [package]
 name = "ass-renderer"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 authors = ["ass-rs contributors"]
 description = "High-performance ASS subtitle renderer with modular backends"
 license = "MPL-2.0"
-repository = "https://github.com/ass-rs/ass-renderer"
+repository.workspace = true
 keywords = ["ass", "subtitle", "renderer", "webgpu", "vulkan"]
 categories = ["multimedia::video", "graphics", "rendering"]
 
 [dependencies]
 # Core dependency
-ass-core = { path = "../ass-core", version = "0.1.0" }
+ass-core.workspace = true
 
 # Text shaping and rendering
-rustybuzz = "0.11"
-tiny-skia = "0.11"
-fontdb = "0.16"
-ttf-parser = "0.20"
+rustybuzz.workspace = true
+tiny-skia.workspace = true
+fontdb.workspace = true
+ttf-parser.workspace = true
 
 # Parallelization
-rayon = { version = "1.10", optional = true }
+rayon = { workspace = true, optional = true }
 
 # Repose GPU backend (scene emission + offscreen readback)
-repose-core = { version = "0.30", optional = true }
-repose-render-wgpu = { version = "0.30", optional = true }
-lyon_path = { version = "1.0", optional = true }
-lyon_tessellation = { version = "1.0", optional = true }
+repose-core = { workspace = true, optional = true }
+repose-render-wgpu = { workspace = true, optional = true }
+lyon_path = { workspace = true, optional = true }
+lyon_tessellation = { workspace = true, optional = true }
 
 # Utilities
-smallvec = "1.14"
-thiserror = "1.0"
-ahash = "0.8"
-bumpalo = { version = "3.16", optional = true }
+smallvec.workspace = true
+thiserror.workspace = true
+ahash.workspace = true
+bumpalo = { workspace = true, optional = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"], optional = true }
-serde_json = { version = "1.0", optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 # Debug and visualization
-image = { version = "0.24", optional = true }
+image = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-proptest = "1.5"
-pretty_assertions = "1.4"
-env_logger = "0.11"
+criterion.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true
+env_logger.workspace = true
 
 [features]
 default = [
@@ -117,10 +118,10 @@ plugins = []
 
 # libass discovery for the dev-only `libass-compare` feature (see build.rs).
 [target.'cfg(windows)'.build-dependencies]
-vcpkg = "0.2"
+vcpkg.workspace = true
 
 [target.'cfg(not(windows))'.build-dependencies]
-pkg-config = "0.3"
+pkg-config.workspace = true
 
 [[bench]]
 name = "render_benchmarks"

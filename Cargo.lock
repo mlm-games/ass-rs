@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "ass-renderer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ahash",
  "ass-core",
@@ -2658,6 +2658,8 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 [[package]]
 name = "repose-core"
 version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a67537c936a99586072f1dcbc2332ee812eb1d168f5143e6caf2e0e9f10915e1"
 dependencies = [
  "log",
  "parking_lot",
@@ -2670,6 +2672,8 @@ dependencies = [
 [[package]]
 name = "repose-macros"
 version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f18c63e0e16cd0969ec5472521c4fc98275a9d2a914183c4167a341d895af229"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2679,6 +2683,8 @@ dependencies = [
 [[package]]
 name = "repose-render-wgpu"
 version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "480f5c1d581b4cb3645c72a2cdf1a8b7404682d53dde2b6f9606a8133aa11ad1"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2697,6 +2703,8 @@ dependencies = [
 [[package]]
 name = "repose-text"
 version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a547d7f169fb2c31143c98f9f863137458d16fad15ab309954e1e4aa8408ed1"
 dependencies = [
  "font-awl",
  "js-sys",

@@ -2,6 +2,7 @@
 !.github
 !.gitmodules
 !.githooks/
+!.cargo/
 target
 *.profraw
 cobertura.xml

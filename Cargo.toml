@@ -1,18 +1,60 @@
 [workspace]
-members = ["crates/ass-core", "crates/ass-editor", "crates/ass-renderer"]
+members = ["crates/*"]
 resolver = "2"
 
-[workspace.dependencies]
-# Shared dependencies with pinned versions for security and reproducibility
-thiserror = "1.0.63"
-ahash = { version = "0.8.11", default-features = false, features = ["std"] }
-bitflags = "2.4.1"
-
 [workspace.package]
+version = "0.1.1"
 edition = "2021"
-rust-version = "1.98"
 license = "MIT"
 repository = "https://github.com/wiedymi/ass-rs"
+rust-version = "1.98"
+
+[workspace.dependencies]
+# Internal crates
+ass-core = { path = "crates/ass-core", version = "0.1.1" }
+ass-editor = { path = "crates/ass-editor", version = "0.1.1" }
+ass-renderer = { path = "crates/ass-renderer", version = "0.1.1" }
+
+# Shared core deps
+thiserror = "1"
+ahash = { version = "0.8", default-features = false, features = ["std"] }
+bitflags = "2"
+hashbrown = { version = "0.14", features = ["ahash"] }
+bumpalo = "3"
+wide = "0.7"
+unicode-linebreak = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Editor deps
+ropey = { version = "1.6", default-features = false }
+fst = "0.4"
+parking_lot = "0.12"
+futures = "0.3"
+tokio = { version = "1", features = ["sync"] }
+regex = "1"
+static_assertions = "1"
+getrandom = "0.3"
+tempfile = "3"
+pretty_assertions = "1"
+proptest = "1"
+
+# Renderer deps
+rustybuzz = "0.11"
+tiny-skia = "0.11"
+fontdb = "0.16"
+ttf-parser = "0.20"
+rayon = "1"
+repose-core = "0.30"
+repose-render-wgpu = "0.30"
+lyon_path = "1.0"
+lyon_tessellation = "1.0"
+smallvec = "1"
+image = "0.24"
+env_logger = "0.11"
+vcpkg = "0.2"
+pkg-config = "0.3"
 
 [workspace.lints.clippy]
 # Allow negative feature names as they are required for nostd compatibility
@@ -35,3 +77,5 @@ inherits = "release"
 debug = true
 strip = false
 
+[profile.dev]
+opt-level = 1
