@@ -18,11 +18,8 @@ pub mod raster;
 #[cfg(feature = "software-backend")]
 pub mod software;
 
-#[cfg(feature = "repose-backend")]
+#[cfg(all(feature = "repose-backend", not(feature = "nostd")))]
 pub mod repose;
-
-#[cfg(all(feature = "repose-backend", feature = "nostd"))]
-compile_error!("`repose-backend` requires std and cannot be combined with `nostd`");
 
 /// Backend type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,12 +150,14 @@ pub fn create_backend(
             // the Repose backend only needs a GPU at render time, so `Auto`
             // resolves to it whenever the feature is compiled in; select
             // `Software` explicitly for headless-without-GPU environments.
-            #[cfg(feature = "repose-backend")]
+            // Repose needs std + GPU and is silently unavailable under `nostd`,
+            // where we fall through to the software reference.
+            #[cfg(all(feature = "repose-backend", not(feature = "nostd")))]
             {
                 return create_backend(BackendType::Repose, width, height);
             }
 
-            #[cfg(not(feature = "repose-backend"))]
+            #[cfg(any(not(feature = "repose-backend"), feature = "nostd"))]
             {
                 #[cfg(feature = "software-backend")]
                 return create_backend(BackendType::Software, width, height);
@@ -175,7 +174,7 @@ pub fn create_backend(
             Ok(Box::new(backend))
         }
 
-        #[cfg(feature = "repose-backend")]
+        #[cfg(all(feature = "repose-backend", not(feature = "nostd")))]
         BackendType::Repose => {
             let context = crate::renderer::RenderContext::new(width, height);
             Ok(Box::new(repose::ReposeBackend::new(&context)))

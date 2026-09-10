@@ -21,7 +21,7 @@ impl BackendProber {
     pub fn new() -> Self {
         let mut preferred_order = Vec::new();
 
-        #[cfg(feature = "repose-backend")]
+        #[cfg(all(feature = "repose-backend", not(feature = "nostd")))]
         preferred_order.push(BackendType::Repose);
 
         #[cfg(feature = "software-backend")]
@@ -65,7 +65,7 @@ impl BackendProber {
                 Ok(Box::new(SoftwareBackend::new(context)?))
             }
 
-            #[cfg(feature = "repose-backend")]
+            #[cfg(all(feature = "repose-backend", not(feature = "nostd")))]
             BackendType::Repose => {
                 use crate::backends::repose::ReposeBackend;
                 Ok(Box::new(ReposeBackend::new(context)))
@@ -82,8 +82,8 @@ impl BackendProber {
             BackendType::Software => true,
 
             // Construction is lazy (no GPU needed); rendering fails loudly
-            // without a WGPU adapter.
-            #[cfg(feature = "repose-backend")]
+            // without a WGPU adapter. Unavailable under `nostd`.
+            #[cfg(all(feature = "repose-backend", not(feature = "nostd")))]
             BackendType::Repose => true,
 
             _ => false,

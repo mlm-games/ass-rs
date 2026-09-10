@@ -1,7 +1,7 @@
 //! Software (CPU) rendering backend using tiny-skia
 
 #[cfg(feature = "nostd")]
-use alloc::{boxed::Box, format, sync::Arc, vec, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 #[cfg(not(feature = "nostd"))]
 use std::{boxed::Box, sync::Arc, vec::Vec};
 

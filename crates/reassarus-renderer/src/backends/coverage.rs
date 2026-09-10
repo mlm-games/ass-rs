@@ -10,7 +10,7 @@
 //! re-rasterizing every frame.
 
 #[cfg(feature = "nostd")]
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
 use tiny_skia::{Path, PathSegment};
 
