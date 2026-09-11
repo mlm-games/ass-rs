@@ -14,8 +14,8 @@ A modular, high-performance Rust implementation of the ASS (Advanced SubStation 
 - **Performance**: <5ms parsing with zero-copy spans, SIMD optimizations
 - **Thread Safety**: Immutable `Script` design with `Send + Sync`
 - **Extensibility**: Runtime plugin registry for custom tags/sections
-- **Modern Standards**: Full libass 0.17.4+ compatibility with Unicode wrapping
-- **Cross-Platform**: Native WASM support, nostd compatibility
+- **Modern Standards**: Growing libass 0.17.x parity (differentially tested, e.g. ≤2px perspective fit), Unicode wrapping via UAX #14
+- **Cross-Platform**: Pure Rust with nostd-compatible core/editor paths for embedded targets
 
 ## 📖 Specifications
 
@@ -35,21 +35,20 @@ The ASS-RS ecosystem consists of modular, interoperable crates:
 │  reassarus-core   │────│ reassarus-renderer │    │ reassarus-editor  │
 │   (parser)  │    │  (rendering) │    │ (editing)   │
 └─────────────┘    └──────────────┘    └─────────────┘
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           │
-              ┌─────────────────────────┐
-              │      ass-wasm           │
-              │   (web bindings)        │
-              └─────────────────────────┘
 ```
 
 - **`reassarus-core`**: Zero-copy parsing, analysis, and AST manipulation — *available, stable*
 - **`reassarus-editor`**: Interactive editing APIs with incremental updates — *available, stable*
-- **`reassarus-renderer`**: Multiple rendering backends (software, GPU, web) — *work in progress; software backend functional, GPU backends experimental*
-- **`ass-cli`**: Command-line tools for processing and conversion — *planned*
-- **`ass-wasm`**: WebAssembly bindings for browser integration — *planned*
-- **`ass-benchmarks`**: Performance testing and libass comparisons — *planned*
+- **`reassarus-renderer`**: Software (tiny-skia + scanline/coverage cache) and Repose GPU scene-adapter backends — *software backend is the correctness reference with pixel-level tests; Repose adapter has structural parity coverage (see below), pixel comparison is structural-similarity (different shaping stacks, needs a WGPU adapter at render time)*
+- **`ass-cli`**: Command-line tools for processing and conversion — *planned (crate does not exist yet)*
+- **`ass-benchmarks`**: Performance testing and libass comparisons — *planned as a standalone crate (per-crate benches and a dev-only native-libass A/B example exist today)*
+
+### Renderer parity status
+
+- **Software backend (reference)**: pixel-level regression tests in `crates/reassarus-renderer/tests/software_render.rs` — inline colors, `\frz` direction/geometry, `\frx`/`\fry` staying on-screen, `\fax`/`\fay` shear, `\bord`/`\shad`, `\blur`/`\be` softening fill+outline+shadow together, `\clip`/`\iclip` partitioning, `\r` reset, complex `\fade` holds, `\k`/`\kf` karaoke colors, `\p` drawings, BorderStyle 3 opaque boxes, `\org` pivots, `\t` growth from base size, multi-line spacing/centering, auto-wrap, collision stacking, static-frame cache consistency, ms/cs clock agreement, smooth `\move` interpolation.
+- **Repose GPU adapter** (`backends::repose::layers_to_scene`, pure CPU, no GPU needed): structural parity tests in `tests/repose_parity.rs` — outline stroke-under-fill, shadow offset pass at full ASS depth, whole-run `\blur` vs outline-only `\be` layers, `\clip`/`\iclip` ops, `\frz` rotation, `\fax`/`\fay` shear, ASS-percent scale normalization, measured shaping bounds forwarded to scene rects, resolved font family, `\k` flip vs `\K` sweep clips, vector fill+stroke mesh passes, animated `\move`, transparency culling, distant `\org` pivots, and perspective `\frx`/`\fry` (libass 0.17.5 rotation, ≤2px) with `\org` as a fixed point of the projective map.
+- **Pixel-level Repose vs software** (`tests/repose_pixel_parity.rs`): structural similarity (coverage, ink mass ballpark, line centres) — not bit-identity, since the stacks shape text differently. Skips loudly without a WGPU adapter. Exact-pixel A/B against native libass lives in `examples/libass_ffi_compare.rs` and requires the dev-only `libass-compare` feature plus an installed libass.
+- **Backend selection**: `BackendType::Auto` (and `Renderer::with_auto_backend`) prefers **Repose** when compiled in, falling back to **Software**; select `Software` explicitly for headless-without-GPU environments.
 
 ## ⚡ Performance Targets
 
@@ -66,13 +65,13 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-reassarus-core = "0.1.1"
+reassarus-core = "0.1.2"
 ```
 
 Basic usage:
 
 ```rust
-use reassarus_core::Script;
+use reassarus_core::{Script, ScriptAnalysis, Section};
 
 let script_text = r#"
 [Script Info]
@@ -92,31 +91,28 @@ Dialogue: 0,0:00:00.00,0:00:05.00,Default,,0,0,0,,{\k50}Ka{\k50}ra{\k100}oke
 let script = Script::parse(script_text)?;
 
 // Analysis and linting
-let analysis = script.analyze()?;
+let analysis = ScriptAnalysis::analyze(&script)?;
 for issue in analysis.lint_issues() {
     println!("Warning: {}", issue);
 }
 
 // Access parsed data with zero-copy spans
 for section in script.sections() {
-    match section {
-        Section::Events(events) => {
-            for event in events.dialogues() {
-                println!("Text: {}", event.text());
-                println!("Start: {}", event.start_time());
-            }
+    if let Section::Events(events) = section {
+        for event in events.iter().filter(|e| e.is_dialogue()) {
+            println!("Text: {}", event.text);
+            println!("Start (cs): {}", event.start_time_cs()?);
         }
-        _ => {}
     }
 }
 
-// For complex nested transforms, use the fixed parser
-use reassarus_core::analysis::events::parse_override_block_fixed;
+// For complex nested transforms, use the override-block parser
+use reassarus_core::analysis::events::parse_override_block;
 
 let mut tags = Vec::new();
 let mut diagnostics = Vec::new();
 let complex_transform = r"\t(0,1000,\fs50\1c&HFF0000&)";
-parse_override_block_fixed(complex_transform, 0, &mut tags, &mut diagnostics);
+parse_override_block(complex_transform, 0, &mut tags, &mut diagnostics);
 ```
 
 ## 🔧 Features
@@ -128,30 +124,43 @@ Enable features as needed:
 reassarus-core = { version = "0.1", features = ["simd", "arena", "serde"] }
 ```
 
-- **`analysis`** (default): Deep analysis and linting capabilities
-- **`plugins`** (default): Extension registry for custom handlers
-- **`simd`**: SIMD-accelerated parsing and processing
-- **`arena`**: Arena allocation for reduced memory overhead
-- **`nostd`**: Embedded and WASM-optimized builds
+Two flavors select feature sets (mirrored by `reassarus-editor`):
+
+- **`full`** (default): `std` + `analysis` + `plugins` + `stream` + `simd` + `arena` + `unicode-wrap` + `serde`
+- **`minimal`**: `nostd`-compatible base — `nostd` + `analysis` + `plugins` + `stream`
+
+Granular features:
+
+- **`std` / `nostd`**: Standard library vs embedded-friendly builds (mutually exclusive in practice)
+- **`analysis`**: Deep analysis and linting capabilities
+- **`plugins`**: Extension registry for custom handlers
 - **`stream`**: Chunked processing for large files
-- **`serde`**: JSON serialization support
+- **`unicode-wrap`**: Unicode line-break support (UAX #14, libass 0.17.4+ style)
+- **`simd` / `simd-full`**: SIMD-accelerated parsing (extended UUencode/hex path in `simd-full`)
+- **`arena`**: Arena allocation for reduced memory overhead
+- **`serde`**: Serialization support (`alloc`-only, no `std` required)
+- **`benches`**: Benchmarking infrastructure
 
 ## 🧪 Testing and Benchmarks
 
 Run the full test suite:
 
 ```bash
-# Unit and integration tests
-cargo test --all-features
+# Unit and integration tests (per crate; features differ per crate)
+cargo test -p reassarus-core --all-features
+cargo test -p reassarus-editor --all-features
+cargo test -p reassarus-renderer --all-features
 
-# Performance benchmarks vs libass
-cargo bench --features="benches"
+# Renderer parity suites (need the matching backend features)
+cargo test -p reassarus-renderer --features software-backend,analysis-integration
+cargo test -p reassarus-renderer --features repose-backend,software-backend
 
-# WASM compatibility
-wasm-pack test --chrome
+# Performance benchmarks (per-crate `benches` feature)
+cargo bench -p reassarus-core --features benches
+cargo bench -p reassarus-renderer --features benches
 
-# Fuzzing (requires nightly)
-cargo +nightly fuzz run tokenizer
+# Exact-pixel A/B against native libass (dev-only: needs installed libass)
+cargo run -p reassarus-renderer --example libass_ffi_compare --features software-backend,image,analysis-integration,libass-compare
 ```
 
 ### Development Setup
@@ -190,10 +199,12 @@ cargo bench
 - [x] Full spec compliance testing
 
 ### v0.2.0 - Rendering Pipeline (In Progress)
-- [x] Software rasterizer backend (tiny-skia)
+- [x] Software rasterizer backend (tiny-skia + scanline/coverage cache; pixel-level regression suite)
 - [x] Text shaping via rustybuzz
-- [ ] WebGPU / Vulkan / Metal GPU backends (experimental)
-- [ ] Animation timeline evaluation
+- [x] Repose GPU scene adapter (`repose-core` + `repose-render-wgpu` offscreen readback) with structural parity coverage vs the software reference
+- [x] Animation timeline evaluation (`\t`, `\move`, `\fade`, karaoke) on a native millisecond clock with animated-frame cache bypass
+- [ ] Bit-identical GPU pixel parity (currently structural similarity: coverage, ink-mass ballpark, line centres)
+- [ ] Exact-pixel libass A/B beyond the dev-only `libass-compare` example
 
 ### v0.3.0 - Editor Integration ✅
 - [x] Incremental parsing for editors (<1ms edits, <5ms re-parses)
@@ -203,7 +214,6 @@ cargo bench
 
 ### v1.0.0 - Production Ready
 - [ ] Complete libass API parity
-- [ ] Browser runtime optimization
 - [ ] Production battle-testing
 - [ ] Comprehensive documentation
 

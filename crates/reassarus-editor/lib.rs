@@ -133,7 +133,7 @@
 //!
 //! ## Optional Features
 //! - **`simd`**: SIMD acceleration for parsing performance
-//! - **`nostd`**: No-standard library support for embedded/WASM
+//! - **`nostd`**: No-standard library support for embedded targets
 //! - **`dev-benches`**: Development benchmarking
 //!
 //! See the README for `Cargo.toml` dependency snippets for each flavor.

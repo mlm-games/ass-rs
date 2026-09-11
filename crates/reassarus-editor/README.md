@@ -14,7 +14,7 @@ A high-performance, ergonomic editor layer for ASS (Advanced SubStation Alpha) s
 - **🔌 Extensible**: Plugin system for custom commands, syntax highlighting, and auto-completion
 - **🧵 Thread-Safe**: Optional multi-threading support with Arc/Mutex (feature-gated)
 - **📦 Zero Dependencies**: Core functionality with minimal external dependencies
-- **🌐 Platform Support**: Native, WASM, and no_std compatibility
+- **🌐 Platform Support**: Native Rust with no_std compatibility for embedded targets
 
 ## 📋 Performance Targets
 
@@ -208,7 +208,7 @@ reassarus-editor uses feature flags to enable optional functionality:
 - **`stream`**: Incremental parsing for large files
 
 ### Platform Features
-- **`nostd`**: No-standard library support for embedded/WASM
+- **`nostd`**: No-standard library support for embedded targets
 - **`dev-benches`**: Development benchmarking
 
 ### Usage Examples
@@ -220,7 +220,7 @@ reassarus-editor = { version = "0.1", default-features = false, features = ["min
 # Full-featured desktop editor
 reassarus-editor = { version = "0.1", features = ["full", "simd"] }
 
-# WASM/embedded build  
+# Embedded (nostd) build
 reassarus-editor = { version = "0.1", default-features = false, features = ["minimal", "nostd"] }
 
 # Server-side processing
@@ -360,7 +360,6 @@ Licensed under the [MIT license](../../LICENSE).
 - **[reassarus-core](../reassarus-core/)**: Zero-copy ASS parsing and analysis
 - **[reassarus-renderer](../reassarus-renderer/)**: High-performance subtitle rendering
 - **[ass-cli](../ass-cli/)**: Command-line tools for subtitle processing
-- **[ass-wasm](../ass-wasm/)**: WebAssembly bindings for browser use
 
 ---
 

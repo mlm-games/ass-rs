@@ -11,7 +11,7 @@ High-performance ASS (Advanced SubStation Alpha) subtitle renderer with modular 
     also the correctness reference for the GPU path)
   - Repose (GPU) scene adapter: composes subtitles with the rest of a Repose
     UI via `repose-core` + `repose-render-wgpu` offscreen readback
-  - Automatic backend selection (defaults to Software)
+  - Automatic backend selection (prefers Repose when compiled in, falls back to Software)
 
 - **Complete ASS/SSA Support**
   - All ASS v4+ tags and formatting
@@ -77,9 +77,12 @@ let mut renderer = Renderer::new(BackendType::Repose, context)?;
 ```
 
 The pure-CPU `backends::repose::layers_to_scene` conversion (no GPU) is what
-the structural parity tests exercise. Known approximations vs the software
-reference are documented on `backends::repose` (perspective `\frx`/`\fry`
-folded to shear, estimated text bounds, whole-run blur temps).
+the structural parity tests exercise (`tests/repose_parity.rs`). Current
+state vs the software reference: perspective `\frx`/`\fry` uses libass's
+exact 3D rotation about the `\org` pivot (differentially fit against libass
+0.17.5, ≤2px), scene rects use shaping-measured bounds, and `\be` wraps
+just the outline stroke while full `\blur` wraps the whole run — see
+`backends::repose` docs for the full mapping.
 
 For production use, we strongly recommend the Software backend which has full feature support and has been thoroughly tested.
 
